@@ -346,6 +346,26 @@ func TestFabricResolveInstallerErrorPropagates(t *testing.T) {
 	}
 }
 
+func TestFabricServerJarURLForUsesExactLoader(t *testing.T) {
+	srv := fabricServer(t)
+	p := &Fabric{BaseURL: srv.URL}
+	url, err := p.ServerJarURLFor(ctx(), "1.20.1", "0.15.11")
+	if err != nil {
+		t.Fatalf("ServerJarURLFor: %v", err)
+	}
+	want := srv.URL + "/v2/versions/loader/1.20.1/0.15.11/1.0.1/server/jar"
+	if url != want {
+		t.Fatalf("url = %q, quiero %q", url, want)
+	}
+}
+
+func TestFabricServerJarURLForInstallerErrorPropagates(t *testing.T) {
+	p := &Fabric{BaseURL: "http://127.0.0.1:1"}
+	if _, err := p.ServerJarURLFor(ctx(), "1.20.1", "0.15.11"); err == nil {
+		t.Fatal("error del endpoint de installer debe propagarse")
+	}
+}
+
 func TestFabricResolveNoStableInstallerFails(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v2/versions/loader", func(w http.ResponseWriter, r *http.Request) {

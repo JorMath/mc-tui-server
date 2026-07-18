@@ -116,18 +116,18 @@ func WizardView(a *app) *WizardViewView {
 		}
 		__tui_0.AddChild(__tui_5)
 	}
-	if a.wizStep.Get() == wizName {
+	if a.wizStep.Get() == wizPackSearch {
 		__tui_8 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
 		__tui_9 := tui.New(
-			tui.WithText("Name:"),
+			tui.WithText("Search modpacks:"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
 		__tui_8.AddChild(__tui_9)
 		__tui_10 := tui.New(
-			tui.WithText(a.wizName.Get()),
+			tui.WithText(a.wizPackQuery.Get()),
 		)
 		__tui_8.AddChild(__tui_10)
 		__tui_11 := tui.New(
@@ -136,78 +136,159 @@ func WizardView(a *app) *WizardViewView {
 		)
 		__tui_8.AddChild(__tui_11)
 		__tui_0.AddChild(__tui_8)
+		__tui_12 := tui.New(
+			tui.WithText("Fabric modpacks only — the server runs on the Fabric launcher"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_12)
 		if a.wizMsg.Get() != "" {
-			__tui_12 := tui.New(
+			__tui_13 := tui.New(
 				tui.WithText(a.wizMsg.Get()),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 			)
-			__tui_0.AddChild(__tui_12)
+			__tui_0.AddChild(__tui_13)
 		}
 	}
-	if a.wizStep.Get() == wizMem {
-		__tui_13 := tui.New(
+	if a.wizStep.Get() == wizPackList {
+		__tui_14 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+			tui.WithFlexGrow(1),
+			tui.WithScrollable(tui.ScrollVertical),
+			tui.WithScrollOffset(0, scrollTo(a.wizPackIdx.Get())),
+		)
+		for __idx_0, item := range a.wizPackItems() {
+			_ = __idx_0
+			if item.Sel {
+				__tui_15 := tui.New(
+					tui.WithText(fmt.Sprintf("> %s", item.Text)),
+					tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
+				)
+				__tui_14.AddChild(__tui_15)
+			} else {
+				__tui_16 := tui.New(
+					tui.WithText(fmt.Sprintf("  %s", item.Text)),
+				)
+				__tui_14.AddChild(__tui_16)
+			}
+		}
+		__tui_0.AddChild(__tui_14)
+	}
+	if a.wizStep.Get() == wizPackVer {
+		__tui_17 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+			tui.WithFlexGrow(1),
+			tui.WithScrollable(tui.ScrollVertical),
+			tui.WithScrollOffset(0, scrollTo(a.wizPackVerIdx.Get())),
+		)
+		for __idx_0, item := range a.wizPackVerItems() {
+			_ = __idx_0
+			if item.Sel {
+				__tui_18 := tui.New(
+					tui.WithText(fmt.Sprintf("> %s", item.Text)),
+					tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
+				)
+				__tui_17.AddChild(__tui_18)
+			} else {
+				__tui_19 := tui.New(
+					tui.WithText(fmt.Sprintf("  %s", item.Text)),
+				)
+				__tui_17.AddChild(__tui_19)
+			}
+		}
+		__tui_0.AddChild(__tui_17)
+	}
+	if a.wizStep.Get() == wizName {
+		__tui_20 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_14 := tui.New(
-			tui.WithText("Memory (MB):"),
+		__tui_21 := tui.New(
+			tui.WithText("Name:"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_13.AddChild(__tui_14)
-		__tui_15 := tui.New(
-			tui.WithText(a.wizMemory.Get()),
+		__tui_20.AddChild(__tui_21)
+		__tui_22 := tui.New(
+			tui.WithText(a.wizName.Get()),
 		)
-		__tui_13.AddChild(__tui_15)
-		__tui_16 := tui.New(
+		__tui_20.AddChild(__tui_22)
+		__tui_23 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_13.AddChild(__tui_16)
-		__tui_0.AddChild(__tui_13)
+		__tui_20.AddChild(__tui_23)
+		__tui_0.AddChild(__tui_20)
+		if a.wizMsg.Get() != "" {
+			__tui_24 := tui.New(
+				tui.WithText(a.wizMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+			)
+			__tui_0.AddChild(__tui_24)
+		}
+	}
+	if a.wizStep.Get() == wizMem {
+		__tui_25 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
+		__tui_26 := tui.New(
+			tui.WithText("Memory (MB):"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_25.AddChild(__tui_26)
+		__tui_27 := tui.New(
+			tui.WithText(a.wizMemory.Get()),
+		)
+		__tui_25.AddChild(__tui_27)
+		__tui_28 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+		)
+		__tui_25.AddChild(__tui_28)
+		__tui_0.AddChild(__tui_25)
 	}
 	if a.wizStep.Get() == wizEula {
-		__tui_17 := tui.New(
+		__tui_29 := tui.New(
 			tui.WithText("To run the server you must accept the Minecraft EULA:"),
 		)
-		__tui_0.AddChild(__tui_17)
-		__tui_18 := tui.New(
+		__tui_0.AddChild(__tui_29)
+		__tui_30 := tui.New(
 			tui.WithText("https://aka.ms/MinecraftEULA"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
 		)
-		__tui_0.AddChild(__tui_18)
-		__tui_19 := tui.New(
+		__tui_0.AddChild(__tui_30)
+		__tui_31 := tui.New(
 			tui.WithText("Do you accept?"),
 			tui.WithTextStyle(tui.NewStyle().Bold()),
 		)
-		__tui_0.AddChild(__tui_19)
+		__tui_0.AddChild(__tui_31)
 	}
 	if a.wizStep.Get() == wizDownload {
-		__tui_20 := tui.New(
+		__tui_32 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_20)
+		__tui_0.AddChild(__tui_32)
 	}
 	if a.wizStep.Get() == wizError {
-		__tui_21 := tui.New(
+		__tui_33 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 		)
-		__tui_0.AddChild(__tui_21)
+		__tui_0.AddChild(__tui_33)
 	}
-	__tui_22 := HintsRow(a.wizHints(), false)
-	__tui_0.AddChild(__tui_22.Root)
+	__tui_34 := HintsRow(a.wizHints(), false)
+	__tui_0.AddChild(__tui_34.Root)
 
-	watchers = append(watchers, __tui_22.GetWatchers()...)
+	watchers = append(watchers, __tui_34.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_22).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_34).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_22).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_34).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}

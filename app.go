@@ -112,6 +112,13 @@ type app struct {
 	wizMemory   *tui.State[string]
 	wizMsg      *tui.State[string]
 
+	// Flujo de modpacks de Modrinth dentro del asistente (v0.1.2).
+	wizPackQuery  *tui.State[string]
+	wizPacks      *tui.State[[]modrinth.Project]
+	wizPackIdx    *tui.State[int]
+	wizPackVers   *tui.State[[]modrinth.PackVersion]
+	wizPackVerIdx *tui.State[int]
+
 	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
 	// se incrementa tras cada mutación para forzar el re-render.
 	fmOpen      *tui.State[bool]
@@ -177,6 +184,12 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		wizName:     newState(&reg, ""),
 		wizMemory:   newState(&reg, ""),
 		wizMsg:      newState(&reg, ""),
+
+		wizPackQuery:  newState(&reg, ""),
+		wizPacks:      newState(&reg, []modrinth.Project{}),
+		wizPackIdx:    newState(&reg, 0),
+		wizPackVers:   newState(&reg, []modrinth.PackVersion{}),
+		wizPackVerIdx: newState(&reg, 0),
 
 		fmOpen:      newState(&reg, false),
 		fmTab:       newState(&reg, 0),

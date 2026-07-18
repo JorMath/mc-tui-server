@@ -37,6 +37,47 @@ templ WizardView(a *app) {
 				}
 			</div>
 		}
+		if a.wizStep.Get() == wizPackSearch {
+			<div class="flex gap-1">
+				<span class="text-cyan font-bold">Search modpacks:</span>
+				<span>{a.wizPackQuery.Get()}</span>
+				<span class="text-cyan blink">_</span>
+			</div>
+			<span class="font-dim">Fabric modpacks only — the server runs on the Fabric launcher</span>
+			if a.wizMsg.Get() != "" {
+				<span class="text-yellow">{a.wizMsg.Get()}</span>
+			}
+		}
+		if a.wizStep.Get() == wizPackList {
+			<div
+				class="flex-col flex-grow"
+				scrollable={tui.ScrollVertical}
+				scrollOffset={0, scrollTo(a.wizPackIdx.Get())}
+			>
+				for _, item := range a.wizPackItems() {
+					if item.Sel {
+						<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+					} else {
+						<span>{fmt.Sprintf("  %s", item.Text)}</span>
+					}
+				}
+			</div>
+		}
+		if a.wizStep.Get() == wizPackVer {
+			<div
+				class="flex-col flex-grow"
+				scrollable={tui.ScrollVertical}
+				scrollOffset={0, scrollTo(a.wizPackVerIdx.Get())}
+			>
+				for _, item := range a.wizPackVerItems() {
+					if item.Sel {
+						<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+					} else {
+						<span>{fmt.Sprintf("  %s", item.Text)}</span>
+					}
+				}
+			</div>
+		}
 		if a.wizStep.Get() == wizName {
 			<div class="flex gap-1">
 				<span class="text-cyan font-bold">Name:</span>

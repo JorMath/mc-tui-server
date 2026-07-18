@@ -196,3 +196,72 @@ func TestLatestFileErrorPropagates(t *testing.T) {
 		t.Fatal("LatestFile contra servidor inexistente debe fallar")
 	}
 }
+
+// --- Modpacks (v0.1.2) -----------------------------------------------------
+
+func TestSearchModpacksBuildsFacets(t *testing.T) {
+	var gotQuery, gotFacets string
+	srv := searchServer(t, func(r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
+		gotFacets = r.URL.Query().Get("facets")
+	})
+	c := &Client{BaseURL: srv.URL}
+	packs, err := c.SearchModpacks(ctx(), "optimized")
+	if err != nil {
+		t.Fatalf("SearchModpacks: %v", err)
+	}
+	if len(packs) != 2 || packs[0].Title != "EssentialsX" {
+		t.Fatalf("packs = %+v", packs)
+	}
+	if gotQuery != "optimized" {
+		t.Fatalf("query = %q", gotQuery)
+	}
+	for _, want := range []string{`"project_type:modpack"`, `"categories:fabric"`, `"server_side:required","server_side:optional"`} {
+		if !strings.Contains(gotFacets, want) {
+			t.Fatalf("facets %q sin %q", gotFacets, want)
+		}
+	}
+}
+
+func TestSearchModpacksErrorPropagates(t *testing.T) {
+	c := &Client{BaseURL: "http://127.0.0.1:1"}
+	if _, err := c.SearchModpacks(ctx(), "x"); err == nil {
+		t.Fatal("SearchModpacks contra servidor inexistente debe fallar")
+	}
+}
+
+func TestModpackVersionsPicksPrimaryMrpack(t *testing.T) {
+	var gotLoaders string
+	srv := versionServer(t, `[
+		{"id":"v1","name":"1.2.0 for 1.21.4","version_number":"1.2.0","version_type":"release",
+		 "game_versions":["1.21.4"],
+		 "files":[
+			{"url":"https://cdn/x.zip","filename":"extra.zip","primary":false},
+			{"url":"https://cdn/p.mrpack","filename":"pack.mrpack","primary":true}
+		 ]},
+		{"id":"v0","name":"sin archivos","version_number":"1.1.0","version_type":"beta",
+		 "game_versions":["1.21.3"],"files":[]}
+	]`, func(r *http.Request) {
+		gotLoaders = r.URL.Query().Get("loaders")
+	})
+	c := &Client{BaseURL: srv.URL}
+	vers, err := c.ModpackVersions(ctx(), "AAAA")
+	if err != nil {
+		t.Fatalf("ModpackVersions: %v", err)
+	}
+	if gotLoaders != `["fabric"]` {
+		t.Fatalf("loaders = %q", gotLoaders)
+	}
+	// La versión sin archivos se descarta; la otra usa el archivo primario.
+	if len(vers) != 1 || vers[0].Filename != "pack.mrpack" || vers[0].VersionNumber != "1.2.0" {
+		t.Fatalf("vers = %+v", vers)
+	}
+}
+
+func TestModpackVersionsEmptyFails(t *testing.T) {
+	srv := versionServer(t, `[]`, nil)
+	c := &Client{BaseURL: srv.URL}
+	if _, err := c.ModpackVersions(ctx(), "AAAA"); err == nil {
+		t.Fatal("modpack sin versiones Fabric debe fallar")
+	}
+}

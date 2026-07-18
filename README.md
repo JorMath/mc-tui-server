@@ -20,6 +20,9 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   and delete worlds and plugins/mods safely.
 - **Modrinth** — search plugins/mods filtered by your instance's loader and
   game version, and install them with one key.
+- **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`):
+  the wizard downloads the pack's server files and overrides, plus the
+  Fabric server launcher the pack requires. Fabric modpacks only.
 - **Multi-instance** — manage as many local servers as you want; configs
   are stored as JSON in your user config directory. Rename or delete
   instances (with confirmation) right from the sidebar.
@@ -97,7 +100,7 @@ mc-tui-server -version   # print the version and exit
 | `c` or `Enter` | command bar (send commands to the server) |
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install |
-| `n` | new instance wizard (type → version → name → memory → EULA) |
+| `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a Fabric modpack |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
 | `q` | quit (running servers are stopped gracefully) |

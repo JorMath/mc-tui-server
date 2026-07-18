@@ -220,6 +220,13 @@ func (f *Fabric) ResolveJarURL(ctx context.Context, version string) (string, err
 	if len(loaders) == 0 {
 		return "", fmt.Errorf("no stable Fabric loader available")
 	}
+	return f.ServerJarURLFor(ctx, version, loaders[0])
+}
+
+// ServerJarURLFor arma la URL del server launcher para una versión exacta
+// de juego y de loader (la que exige un modpack), con el installer estable
+// más reciente.
+func (f *Fabric) ServerJarURLFor(ctx context.Context, gameVersion, loaderVersion string) (string, error) {
 	installers, err := f.stableVersions(ctx, "/v2/versions/installer")
 	if err != nil {
 		return "", err
@@ -228,5 +235,5 @@ func (f *Fabric) ResolveJarURL(ctx context.Context, version string) (string, err
 		return "", fmt.Errorf("no stable Fabric installer available")
 	}
 	return fmt.Sprintf("%s/v2/versions/loader/%s/%s/%s/server/jar",
-		base(f.BaseURL, defaultFabricBase), version, loaders[0], installers[0]), nil
+		base(f.BaseURL, defaultFabricBase), gameVersion, loaderVersion, installers[0]), nil
 }

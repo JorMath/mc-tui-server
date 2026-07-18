@@ -98,6 +98,93 @@ func (c *Client) Search(ctx context.Context, query string, t config.ServerType, 
 	return result.Hits, nil
 }
 
+// SearchModpacks busca modpacks de Fabric instalables en un servidor
+// (server_side required u optional). Los packs de Forge/NeoForge quedan
+// fuera: el instalador solo soporta el server launcher de Fabric.
+func (c *Client) SearchModpacks(ctx context.Context, query string) ([]Project, error) {
+	facets := [][]string{
+		{"project_type:modpack"},
+		{"categories:fabric"},
+		{"server_side:required", "server_side:optional"},
+	}
+	facetsJSON, _ := json.Marshal(facets)
+
+	params := url.Values{}
+	params.Set("query", query)
+	params.Set("limit", "20")
+	params.Set("facets", string(facetsJSON))
+
+	var result struct {
+		Hits []Project `json:"hits"`
+	}
+	endpoint := c.base() + "/v2/search?" + params.Encode()
+	if err := download.GetJSON(ctx, c.HTTP, endpoint, &result); err != nil {
+		return nil, err
+	}
+	return result.Hits, nil
+}
+
+// PackVersion es una versión instalable de un modpack con su .mrpack.
+type PackVersion struct {
+	ID            string
+	Name          string
+	VersionNumber string
+	VersionType   string
+	GameVersions  []string
+	URL           string
+	Filename      string
+}
+
+// ModpackVersions lista las versiones Fabric de un modpack, más recientes
+// primero (orden de la API), con el archivo .mrpack de cada una.
+func (c *Client) ModpackVersions(ctx context.Context, projectID string) ([]PackVersion, error) {
+	params := url.Values{}
+	params.Set("loaders", jsonList([]string{"fabric"}))
+
+	var versions []struct {
+		ID            string   `json:"id"`
+		Name          string   `json:"name"`
+		VersionNumber string   `json:"version_number"`
+		VersionType   string   `json:"version_type"`
+		GameVersions  []string `json:"game_versions"`
+		Files         []struct {
+			URL      string `json:"url"`
+			Filename string `json:"filename"`
+			Primary  bool   `json:"primary"`
+		} `json:"files"`
+	}
+	endpoint := fmt.Sprintf("%s/v2/project/%s/version?%s", c.base(), projectID, params.Encode())
+	if err := download.GetJSON(ctx, c.HTTP, endpoint, &versions); err != nil {
+		return nil, err
+	}
+	var out []PackVersion
+	for _, v := range versions {
+		if len(v.Files) == 0 {
+			continue
+		}
+		chosen := v.Files[0]
+		for _, f := range v.Files {
+			if f.Primary {
+				chosen = f
+				break
+			}
+		}
+		out = append(out, PackVersion{
+			ID:            v.ID,
+			Name:          v.Name,
+			VersionNumber: v.VersionNumber,
+			VersionType:   v.VersionType,
+			GameVersions:  v.GameVersions,
+			URL:           chosen.URL,
+			Filename:      chosen.Filename,
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("modpack %s has no Fabric versions with files", projectID)
+	}
+	return out, nil
+}
+
 // LatestFile devuelve el archivo de la versión más reciente del proyecto
 // compatible con el loader y la versión del juego.
 func (c *Client) LatestFile(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, error) {

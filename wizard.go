@@ -6,22 +6,30 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
+	"github.com/JorMath/mc-tui-server/internal/modrinth"
+	"github.com/JorMath/mc-tui-server/internal/mrpack"
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
 )
 
-// Pasos del asistente de nueva instancia (R4).
+// Pasos del asistente de nueva instancia (R4). Los pasos wizPack* son el
+// flujo de modpacks de Modrinth (v0.1.2): búsqueda → pack → versión.
 const (
 	wizOff = iota
 	wizType
 	wizLoading
 	wizVersion
+	wizPackSearch
+	wizPackList
+	wizPackVer
 	wizName
 	wizMem
 	wizEula
@@ -29,7 +37,27 @@ const (
 	wizError
 )
 
-var wizTypes = []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric}
+// wizChoice es una opción del paso de tipo: una distribución de servidor o
+// el instalador de modpacks de Modrinth.
+type wizChoice struct {
+	Label   string
+	Type    config.ServerType
+	Modpack bool
+}
+
+var wizChoices = []wizChoice{
+	{Label: "vanilla", Type: config.Vanilla},
+	{Label: "paper", Type: config.Paper},
+	{Label: "purpur", Type: config.Purpur},
+	{Label: "fabric", Type: config.Fabric},
+	{Label: "modpack (Modrinth · Fabric packs)", Modpack: true},
+}
+
+// wizIsModpack indica si la opción elegida en el paso de tipo es el flujo
+// de modpacks.
+func (a *app) wizIsModpack() bool {
+	return wizChoices[a.wizTypeIdx.Get()].Modpack
+}
 
 func validNameChar(r rune) bool {
 	switch {
@@ -47,6 +75,11 @@ func (a *app) wizOpen() {
 	a.wizName.Set("")
 	a.wizMemory.Set("")
 	a.wizMsg.Set("")
+	a.wizPackQuery.Set("")
+	a.wizPacks.Set([]modrinth.Project{})
+	a.wizPackIdx.Set(0)
+	a.wizPackVers.Set([]modrinth.PackVersion{})
+	a.wizPackVerIdx.Set(0)
 	a.wizStep.Set(wizType)
 }
 
@@ -65,7 +98,12 @@ func (a *app) wizFail(gen int, err error) {
 }
 
 func (a *app) wizFetchVersions() {
-	typ := wizTypes[a.wizTypeIdx.Get()]
+	if a.wizIsModpack() {
+		a.wizMsg.Set("")
+		a.wizStep.Set(wizPackSearch)
+		return
+	}
+	typ := wizChoices[a.wizTypeIdx.Get()].Type
 	gen := a.wizGen.Get()
 	a.wizMsg.Set(fmt.Sprintf("Fetching %s versions...", typ))
 	a.wizStep.Set(wizLoading)
@@ -118,7 +156,7 @@ func (a *app) wizMemoryMB() int {
 }
 
 func (a *app) wizStartDownload() {
-	typ := wizTypes[a.wizTypeIdx.Get()]
+	typ := wizChoices[a.wizTypeIdx.Get()].Type
 	version := a.wizVersions.Get()[a.wizVerIdx.Get()]
 	name := a.wizName.Get()
 	memMB := a.wizMemoryMB()
@@ -185,9 +223,9 @@ func (a *app) wizStartDownload() {
 }
 
 func (a *app) wizTypeItems() []listItem {
-	items := make([]listItem, len(wizTypes))
-	for i, t := range wizTypes {
-		items[i] = listItem{Text: string(t), Sel: i == a.wizTypeIdx.Get()}
+	items := make([]listItem, len(wizChoices))
+	for i, c := range wizChoices {
+		items[i] = listItem{Text: c.Label, Sel: i == a.wizTypeIdx.Get()}
 	}
 	return items
 }
@@ -204,8 +242,8 @@ func (a *app) wizMoveType(delta int) {
 		if i < 0 {
 			i = 0
 		}
-		if i >= len(wizTypes) {
-			i = len(wizTypes) - 1
+		if i >= len(wizChoices) {
+			i = len(wizChoices) - 1
 		}
 		return i
 	})
@@ -223,6 +261,229 @@ func (a *app) wizMoveVersion(delta int) {
 		}
 		return i
 	})
+}
+
+// wizPackSearchSubmit busca modpacks Fabric en Modrinth con la query actual.
+func (a *app) wizPackSearchSubmit() {
+	query := a.wizPackQuery.Get()
+	if query == "" {
+		a.wizMsg.Set("Type something to search")
+		return
+	}
+	gen := a.wizGen.Get()
+	a.wizMsg.Set("Searching modpacks on Modrinth...")
+	a.wizStep.Set(wizLoading)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		packs, err := a.mr.SearchModpacks(ctx, query)
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		if a.wizGen.Get() != gen {
+			return
+		}
+		if len(packs) == 0 {
+			a.wizMsg.Set(fmt.Sprintf("No Fabric modpacks found for %q", query))
+			a.wizStep.Set(wizPackSearch)
+			return
+		}
+		a.wizPacks.Set(packs)
+		a.wizPackIdx.Set(0)
+		a.wizMsg.Set("")
+		a.wizStep.Set(wizPackList)
+	}()
+}
+
+// wizFetchPackVersions lista las versiones del modpack elegido.
+func (a *app) wizFetchPackVersions() {
+	packs := a.wizPacks.Get()
+	idx := a.wizPackIdx.Get()
+	if idx < 0 || idx >= len(packs) {
+		return
+	}
+	pack := packs[idx]
+	gen := a.wizGen.Get()
+	a.wizMsg.Set(fmt.Sprintf("Fetching versions of %s...", pack.Title))
+	a.wizStep.Set(wizLoading)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		vers, err := a.mr.ModpackVersions(ctx, pack.ID)
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		if a.wizGen.Get() != gen {
+			return
+		}
+		a.wizPackVers.Set(vers)
+		a.wizPackVerIdx.Set(0)
+		a.wizMsg.Set("")
+		a.wizStep.Set(wizPackVer)
+	}()
+}
+
+func (a *app) wizPackItems() []listItem {
+	packs := a.wizPacks.Get()
+	lines := make([]string, len(packs))
+	for i, p := range packs {
+		desc := p.Description
+		if r := []rune(desc); len(r) > 50 {
+			desc = string(r[:50]) + "…"
+		}
+		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+	}
+	return fullItems(lines, a.wizPackIdx.Get())
+}
+
+func (a *app) wizPackVerItems() []listItem {
+	vers := a.wizPackVers.Get()
+	lines := make([]string, len(vers))
+	for i, v := range vers {
+		games := strings.Join(v.GameVersions, ", ")
+		lines[i] = fmt.Sprintf("%s — MC %s [%s]", v.VersionNumber, games, v.VersionType)
+	}
+	return fullItems(lines, a.wizPackVerIdx.Get())
+}
+
+func (a *app) wizMovePack(delta int) {
+	n := len(a.wizPacks.Get())
+	if n == 0 {
+		return
+	}
+	a.wizPackIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return i
+	})
+}
+
+func (a *app) wizMovePackVer(delta int) {
+	n := len(a.wizPackVers.Get())
+	if n == 0 {
+		return
+	}
+	a.wizPackVerIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return i
+	})
+}
+
+// wizStartModpackInstall descarga el .mrpack, instala sus archivos y
+// overrides en la instancia nueva y baja el server launcher de Fabric que
+// pide el pack. Solo modpacks Fabric: el server se lanza con un único jar.
+func (a *app) wizStartModpackInstall() {
+	packs, vers := a.wizPacks.Get(), a.wizPackVers.Get()
+	pi, vi := a.wizPackIdx.Get(), a.wizPackVerIdx.Get()
+	if pi < 0 || pi >= len(packs) || vi < 0 || vi >= len(vers) {
+		return
+	}
+	pack, pv := packs[pi], vers[vi]
+	name := a.wizName.Get()
+	memMB := a.wizMemoryMB()
+	gen := a.wizGen.Get()
+	a.wizMsg.Set("Downloading modpack...")
+	a.wizStep.Set(wizDownload)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		dir := filepath.Join(a.dataDir, "servers", name)
+		packFile := filepath.Join(dir, pv.Filename)
+		err := download.DownloadFile(ctx, nil, pv.URL, packFile, func(done, total int64) {
+			if total > 0 {
+				a.wizMsg.Set(fmt.Sprintf("Downloading %s... %d%%", pv.Filename, done*100/total))
+			}
+		})
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		ix, err := mrpack.Parse(packFile)
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		mcVer, loaderVer, err := ix.FabricVersions()
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		files, err := ix.ServerFiles()
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		for i, f := range files {
+			a.wizMsg.Set(fmt.Sprintf("Downloading server files %d/%d — %s",
+				i+1, len(files), path.Base(f.Path)))
+			dest := filepath.Join(dir, filepath.FromSlash(f.Path))
+			if err := download.DownloadFile(ctx, nil, f.Downloads[0], dest, nil); err != nil {
+				a.wizFail(gen, err)
+				return
+			}
+		}
+		a.wizMsg.Set("Extracting pack overrides...")
+		if err := mrpack.ExtractOverrides(packFile, dir); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		// El .mrpack ya no hace falta; si no se puede borrar no es grave.
+		_ = os.Remove(packFile)
+		a.wizMsg.Set(fmt.Sprintf("Downloading Fabric server launcher (MC %s, loader %s)...", mcVer, loaderVer))
+		fab := &download.Fabric{}
+		jarURL, err := fab.ServerJarURLFor(ctx, mcVer, loaderVer)
+		if err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		if err := download.DownloadFile(ctx, nil, jarURL, filepath.Join(dir, "server.jar"), nil); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		// El usuario aceptó el EULA en el paso anterior del asistente.
+		if err := os.WriteFile(filepath.Join(dir, "eula.txt"), []byte("eula=true\n"), 0o644); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		inst := config.Instance{
+			Name:     name,
+			Dir:      dir,
+			JarPath:  "server.jar",
+			MemoryMB: memMB,
+			Type:     config.Fabric,
+			Version:  mcVer,
+		}
+		if err := a.store.Add(inst); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		if err := a.store.Save(); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
+		mgr := server.New(inst)
+		a.pumpLogs(mgr)
+		a.managers.Update(func(ms []*server.Manager) []*server.Manager {
+			return append(ms, mgr)
+		})
+		a.appendLog(name, fmt.Sprintf("[mc-tui] Modpack installed: %s %s (MC %s, fabric-loader %s, %d MB)",
+			pack.Title, pv.VersionNumber, mcVer, loaderVer, memMB))
+		a.selected.Set(len(a.managers.Get()) - 1)
+		a.wizClose()
+	}()
 }
 
 func (a *app) wizKeyMap() tui.KeyMap {
@@ -244,6 +505,48 @@ func (a *app) wizKeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.wizMoveVersion(-10) }),
 			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMoveVersion(10) }),
 			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizName) }),
+			esc,
+		}
+	case wizPackSearch:
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				a.wizPackQuery.Update(func(s string) string { return s + string(ke.Rune) })
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.wizPackQuery.Update(func(s string) string {
+					r := []rune(s)
+					if len(r) == 0 {
+						return s
+					}
+					return string(r[:len(r)-1])
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizPackSearchSubmit() }),
+			esc,
+		}
+	case wizPackList:
+		return tui.KeyMap{
+			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.wizMovePack(-1) }),
+			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizMovePack(1) }),
+			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.wizMovePack(-10) }),
+			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMovePack(10) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizFetchPackVersions() }),
+			tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) {
+				a.wizMsg.Set("")
+				a.wizStep.Set(wizPackSearch)
+			}),
+			esc,
+		}
+	case wizPackVer:
+		return tui.KeyMap{
+			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.wizMovePackVer(-1) }),
+			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizMovePackVer(1) }),
+			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.wizMovePackVer(-10) }),
+			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMovePackVer(10) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
+				a.wizMsg.Set("")
+				a.wizStep.Set(wizName)
+			}),
 			esc,
 		}
 	case wizName:
@@ -284,7 +587,13 @@ func (a *app) wizKeyMap() tui.KeyMap {
 		}
 	case wizEula:
 		return tui.KeyMap{
-			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.wizStartDownload() }),
+			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) {
+				if a.wizIsModpack() {
+					a.wizStartModpackInstall()
+				} else {
+					a.wizStartDownload()
+				}
+			}),
 			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizClose() }),
 			esc,
 		}
@@ -304,6 +613,12 @@ func (a *app) wizHints() []hint {
 		return []hint{{"Esc", "cancel"}}
 	case wizVersion:
 		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizPackSearch:
+		return []hint{{"Enter", "search"}, {"Esc", "cancel"}}
+	case wizPackList:
+		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"/", "new search"}, {"Esc", "cancel"}}
+	case wizPackVer:
+		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
 	case wizName:
 		return []hint{{"a-z 0-9 - _", "type"}, {"Enter", "continue"}, {"Esc", "cancel"}}
 	case wizMem:
@@ -318,6 +633,31 @@ func (a *app) wizHints() []hint {
 }
 
 func (a *app) wizStepTitle() string {
+	// El flujo de modpack tiene dos pasos extra (búsqueda y pack).
+	if a.wizIsModpack() {
+		switch a.wizStep.Get() {
+		case wizType:
+			return "1/7 · Server type"
+		case wizPackSearch:
+			return "2/7 · Modpack search"
+		case wizLoading:
+			return "Fetching from Modrinth"
+		case wizPackList:
+			return "3/7 · Modpack"
+		case wizPackVer:
+			return "4/7 · Modpack version"
+		case wizName:
+			return "5/7 · Instance name"
+		case wizMem:
+			return "6/7 · Memory (MB)"
+		case wizEula:
+			return "7/7 · Minecraft EULA"
+		case wizDownload:
+			return "Installing modpack"
+		default:
+			return "Error"
+		}
+	}
 	switch a.wizStep.Get() {
 	case wizType:
 		return "1/5 · Server type"
