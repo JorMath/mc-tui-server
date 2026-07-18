@@ -27,8 +27,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 
 - **Java** on your PATH (or set `java_path` per instance) — the app manages
   server processes but does not install Java.
-- A terminal with a font that includes block characters (any modern
-  terminal works).
+- A terminal with truecolor support and a font that includes block
+  characters (Windows Terminal, or any modern Linux terminal).
 
 ## Install
 
@@ -94,10 +94,12 @@ mc-tui-server -version   # print the version and exit
 | `↑/↓` or `j/k` | select instance |
 | `s` / `x` / `r` | start / stop / restart |
 | `c` or `Enter` | command bar (send commands to the server) |
-| `e` | files panel: properties · worlds · plugins |
+| `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install |
 | `n` | new instance wizard (type → version → name → memory → EULA) |
 | `q` | quit (running servers are stopped gracefully) |
+
+Every screen shows its active keys in the footer, highlighted in cyan.
 
 ### Data locations
 
