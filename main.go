@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 
@@ -10,7 +11,16 @@ import (
 	"mc-tui-server/internal/server"
 )
 
+// version se inyecta en el build con -ldflags "-X main.version=v1.2.3".
+var version = "dev"
+
 func main() {
+	showVersion := flag.Bool("version", false, "print the version and exit")
+	flag.Parse()
+	if *showVersion {
+		fmt.Println("mc-tui-server", version)
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
