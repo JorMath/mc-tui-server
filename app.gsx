@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"mc-tui-server/internal/assets"
 	"mc-tui-server/internal/config"
 	"mc-tui-server/internal/download"
 	"mc-tui-server/internal/metrics"
+	"mc-tui-server/internal/properties"
 	"mc-tui-server/internal/server"
 	"os"
 	"path/filepath"
@@ -70,6 +72,23 @@ type app struct {
 	wizName     *tui.State[string]
 	wizMemory   *tui.State[string]
 	wizMsg      *tui.State[string]
+
+	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
+	// se incrementa tras cada mutación para forzar el re-render.
+	fmOpen      *tui.State[bool]
+	fmTab       *tui.State[int]
+	fmProps     *properties.File
+	fmRev       *tui.State[int]
+	fmPropsIdx  *tui.State[int]
+	fmEditing   *tui.State[bool]
+	fmEditText  *tui.State[string]
+	fmDirty     *tui.State[bool]
+	fmWorlds    *tui.State[[]string]
+	fmPlugins   *tui.State[[]string]
+	fmWorldIdx  *tui.State[int]
+	fmPluginIdx *tui.State[int]
+	fmConfirm   *tui.State[string]
+	fmMsg       *tui.State[string]
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -101,6 +120,21 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		wizName:     tui.NewState(""),
 		wizMemory:   tui.NewState(""),
 		wizMsg:      tui.NewState(""),
+
+		fmOpen:      tui.NewState(false),
+		fmTab:       tui.NewState(0),
+		fmProps:     &properties.File{},
+		fmRev:       tui.NewState(0),
+		fmPropsIdx:  tui.NewState(0),
+		fmEditing:   tui.NewState(false),
+		fmEditText:  tui.NewState(""),
+		fmDirty:     tui.NewState(false),
+		fmWorlds:    tui.NewState([]string{}),
+		fmPlugins:   tui.NewState([]string{}),
+		fmWorldIdx:  tui.NewState(0),
+		fmPluginIdx: tui.NewState(0),
+		fmConfirm:   tui.NewState(""),
+		fmMsg:       tui.NewState(""),
 	}
 	for _, m := range managers {
 		a.pumpLogs(m)
@@ -443,25 +477,7 @@ func (a *app) wizTypeItems() []wizItem {
 
 // wizVersionItems devuelve una ventana de versiones alrededor de la selección.
 func (a *app) wizVersionItems() []wizItem {
-	const window = 12
-	versions := a.wizVersions.Get()
-	sel := a.wizVerIdx.Get()
-	start := sel - window/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + window
-	if end > len(versions) {
-		end = len(versions)
-		if start = end - window; start < 0 {
-			start = 0
-		}
-	}
-	items := make([]wizItem, 0, end-start)
-	for i := start; i < end; i++ {
-		items = append(items, wizItem{Text: versions[i], Sel: i == sel})
-	}
-	return items
+	return windowItems(a.wizVersions.Get(), a.wizVerIdx.Get(), 12)
 }
 
 func (a *app) wizMoveType(delta int) {
@@ -562,9 +578,298 @@ func (a *app) wizKeyMap() tui.KeyMap {
 	}
 }
 
+// --- Panel de archivos (R3) -------------------------------------------------
+func (a *app) fmOpenPanel() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	inst := mgr.Instance()
+	a.fmTab.Set(0)
+	a.fmPropsIdx.Set(0)
+	a.fmWorldIdx.Set(0)
+	a.fmPluginIdx.Set(0)
+	a.fmEditing.Set(false)
+	a.fmDirty.Set(false)
+	a.fmConfirm.Set("")
+	a.fmMsg.Set("")
+
+	props, err := properties.Load(filepath.Join(inst.Dir, "server.properties"))
+	if err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+		props = &properties.File{}
+	}
+	a.fmProps = props
+	a.fmReloadLists(inst)
+	a.fmRev.Update(func(r int) int { return r + 1 })
+	a.fmOpen.Set(true)
+}
+
+func (a *app) fmReloadLists(inst config.Instance) {
+	worlds, err := assets.Worlds(inst.Dir)
+	if err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+	}
+	a.fmWorlds.Set(worlds)
+	plugins, err := assets.Plugins(inst.Dir, inst.Type)
+	if err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+	}
+	a.fmPlugins.Set(plugins)
+}
+
+func (a *app) fmClose() {
+	a.fmOpen.Set(false)
+}
+
+func (a *app) fmPropLines() []string {
+	keys := a.fmProps.Keys()
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		v, _ := a.fmProps.Get(k)
+		out[i] = k + "=" + v
+	}
+	return out
+}
+
+// windowItems devuelve una ventana de elementos alrededor de la selección.
+func windowItems(list []string, sel, window int) []wizItem {
+	start := sel - window/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + window
+	if end > len(list) {
+		end = len(list)
+		if start = end - window; start < 0 {
+			start = 0
+		}
+	}
+	items := make([]wizItem, 0, end-start)
+	for i := start; i < end; i++ {
+		items = append(items, wizItem{Text: list[i], Sel: i == sel})
+	}
+	return items
+}
+
+func (a *app) fmItems() []wizItem {
+	switch a.fmTab.Get() {
+	case 0:
+		return windowItems(a.fmPropLines(), a.fmPropsIdx.Get(), 16)
+	case 1:
+		return windowItems(a.fmWorlds.Get(), a.fmWorldIdx.Get(), 16)
+	default:
+		return windowItems(a.fmPlugins.Get(), a.fmPluginIdx.Get(), 16)
+	}
+}
+
+func (a *app) fmMove(delta int) {
+	move := func(st *tui.State[int], n int) {
+		if n == 0 {
+			return
+		}
+		st.Update(func(i int) int {
+			i += delta
+			if i < 0 {
+				i = 0
+			}
+			if i >= n {
+				i = n - 1
+			}
+			return i
+		})
+	}
+	switch a.fmTab.Get() {
+	case 0:
+		move(a.fmPropsIdx, len(a.fmProps.Keys()))
+	case 1:
+		move(a.fmWorldIdx, len(a.fmWorlds.Get()))
+	default:
+		move(a.fmPluginIdx, len(a.fmPlugins.Get()))
+	}
+}
+
+func (a *app) fmSelectedKey() string {
+	keys := a.fmProps.Keys()
+	i := a.fmPropsIdx.Get()
+	if i < 0 || i >= len(keys) {
+		return ""
+	}
+	return keys[i]
+}
+
+func (a *app) fmBeginEdit() {
+	key := a.fmSelectedKey()
+	if key == "" {
+		return
+	}
+	v, _ := a.fmProps.Get(key)
+	a.fmEditText.Set(v)
+	a.fmEditing.Set(true)
+	a.fmMsg.Set("")
+}
+
+func (a *app) fmCommitEdit() {
+	key := a.fmSelectedKey()
+	a.fmProps.Set(key, a.fmEditText.Get())
+	a.fmDirty.Set(true)
+	a.fmEditing.Set(false)
+	a.fmRev.Update(func(r int) int { return r + 1 })
+	a.fmMsg.Set("Cambio en memoria; pulsa w para guardar")
+}
+
+func (a *app) fmSave() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	path := filepath.Join(mgr.Instance().Dir, "server.properties")
+	if err := a.fmProps.Save(path); err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+		return
+	}
+	a.fmDirty.Set(false)
+	a.fmMsg.Set("Guardado. Reinicia el servidor para aplicar los cambios")
+}
+
+// fmAskDelete pide confirmación para borrar el mundo o plugin seleccionado.
+func (a *app) fmAskDelete() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	if mgr.Status() != server.Stopped {
+		a.fmMsg.Set("Detén el servidor antes de borrar archivos")
+		return
+	}
+	var name string
+	switch a.fmTab.Get() {
+	case 1:
+		if ws := a.fmWorlds.Get(); len(ws) > 0 {
+			name = ws[a.fmWorldIdx.Get()]
+		}
+	case 2:
+		if ps := a.fmPlugins.Get(); len(ps) > 0 {
+			name = ps[a.fmPluginIdx.Get()]
+		}
+	}
+	if name == "" {
+		return
+	}
+	a.fmConfirm.Set(name)
+}
+
+func (a *app) fmDoDelete() {
+	mgr := a.current()
+	name := a.fmConfirm.Get()
+	a.fmConfirm.Set("")
+	if mgr == nil || name == "" {
+		return
+	}
+	inst := mgr.Instance()
+	var err error
+	if a.fmTab.Get() == 1 {
+		err = assets.DeleteWorld(inst.Dir, name)
+	} else {
+		err = assets.DeletePlugin(inst.Dir, inst.Type, name)
+	}
+	if err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+		return
+	}
+	a.fmMsg.Set(fmt.Sprintf("%q eliminado", name))
+	a.fmWorldIdx.Set(0)
+	a.fmPluginIdx.Set(0)
+	a.fmReloadLists(inst)
+}
+
+func (a *app) fmTitle() string {
+	_ = a.fmRev.Get() // dependencia explícita: re-render tras mutar fmProps
+	title := fmt.Sprintf("Archivos — %s · %s", a.currentName(), a.fmTabName())
+	if a.fmDirty.Get() {
+		title += " (sin guardar)"
+	}
+	return title
+}
+
+func (a *app) fmHelp() string {
+	if a.fmTab.Get() == 0 {
+		return "↑/↓ elegir | Enter editar | w guardar | 1/2/3 o Tab pestaña | Esc cerrar"
+	}
+	return "↑/↓ elegir | d borrar | 1/2/3 o Tab pestaña | Esc cerrar"
+}
+
+func (a *app) fmTabName() string {
+	switch a.fmTab.Get() {
+	case 0:
+		return "Propiedades"
+	case 1:
+		return "Mundos"
+	default:
+		return "Plugins/Mods"
+	}
+}
+
+func (a *app) fmKeyMap() tui.KeyMap {
+	if a.fmEditing.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				a.fmEditText.Update(func(s string) string { return s + string(ke.Rune) })
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.fmEditText.Update(func(s string) string {
+					r := []rune(s)
+					if len(r) == 0 {
+						return s
+					}
+					return string(r[:len(r)-1])
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.fmCommitEdit() }),
+			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmEditing.Set(false) }),
+		}
+	}
+	if a.fmConfirm.Get() != "" {
+		return tui.KeyMap{
+			tui.OnStop(tui.Rune('s'), func(ke tui.KeyEvent) { a.fmDoDelete() }),
+			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
+			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
+		}
+	}
+	return tui.KeyMap{
+		tui.OnStop(tui.Rune('1'), func(ke tui.KeyEvent) { a.fmTab.Set(0) }),
+		tui.OnStop(tui.Rune('2'), func(ke tui.KeyEvent) { a.fmTab.Set(1) }),
+		tui.OnStop(tui.Rune('3'), func(ke tui.KeyEvent) { a.fmTab.Set(2) }),
+		tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.fmTab.Update(func(t int) int { return (t + 1) % 3 }) }),
+		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.fmMove(-1) }),
+		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.fmMove(1) }),
+		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.fmMove(-10) }),
+		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.fmMove(10) }),
+		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
+			if a.fmTab.Get() == 0 {
+				a.fmBeginEdit()
+			}
+		}),
+		tui.OnStop(tui.Rune('w'), func(ke tui.KeyEvent) {
+			if a.fmTab.Get() == 0 {
+				a.fmSave()
+			}
+		}),
+		tui.OnStop(tui.Rune('d'), func(ke tui.KeyEvent) {
+			if a.fmTab.Get() != 0 {
+				a.fmAskDelete()
+			}
+		}),
+		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmClose() }),
+	}
+}
+
 func (a *app) KeyMap() tui.KeyMap {
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
+	}
+	if a.fmOpen.Get() {
+		return a.fmKeyMap()
 	}
 	if a.cmdActive.Get() {
 		return tui.KeyMap{
@@ -579,6 +884,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
+		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -743,6 +1049,36 @@ templ (a *app) Render() {
 						<span class="font-dim">Esc cerrar</span>
 					}
 				</div>
+			} else if a.fmOpen.Get() {
+				<div class="flex-col border-rounded border-cyan p-1 flex-grow">
+					<span class="font-bold text-cyan shrink-0">{a.fmTitle()}</span>
+					<span class="font-dim shrink-0">1 Propiedades | 2 Mundos | 3 Plugins/Mods</span>
+					if len(a.fmItems()) == 0 {
+						<span class="font-dim">(no hay elementos)</span>
+					}
+					for _, item := range a.fmItems() {
+						if item.Sel {
+							<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+						} else {
+							<span>{fmt.Sprintf("  %s", item.Text)}</span>
+						}
+					}
+					if a.fmEditing.Get() {
+						<div class="flex gap-1">
+							<span class="text-cyan font-bold">{fmt.Sprintf("%s =", a.fmSelectedKey())}</span>
+							<span>{a.fmEditText.Get()}</span>
+							<span class="text-cyan blink">_</span>
+							<span class="font-dim">(Enter aplica | Esc cancela)</span>
+						</div>
+					}
+					if a.fmConfirm.Get() != "" {
+						<span class="text-red font-bold">{fmt.Sprintf("¿Borrar %q definitivamente? (s = sí, n = no)", a.fmConfirm.Get())}</span>
+					}
+					if a.fmMsg.Get() != "" {
+						<span class="text-yellow">{a.fmMsg.Get()}</span>
+					}
+					<span class="font-dim shrink-0">{a.fmHelp()}</span>
+				</div>
 			} else {
 				<div
 					class="flex-col border-rounded p-1 flex-grow"
@@ -764,7 +1100,7 @@ templ (a *app) Render() {
 				<span class="font-dim">(Enter envía | Esc cierra)</span>
 			</div>
 		} else {
-			<span class="font-dim shrink-0">↑/↓ seleccionar | s iniciar | x detener | r reiniciar | c/Enter comando | n nueva | q salir</span>
+			<span class="font-dim shrink-0">↑/↓ seleccionar | s iniciar | x detener | r reiniciar | c/Enter comando | e archivos | n nueva | q salir</span>
 		}
 	</div>
 }
