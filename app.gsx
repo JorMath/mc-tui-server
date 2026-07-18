@@ -54,20 +54,24 @@ var splashFont = map[rune][]string{
 	'V': {"█   █", "█   █", "█   █", " █ █ ", "  █  "},
 }
 
+// blank es el "braille pattern blank" (U+2800): ocupa una celda pero no es
+// espacio, así el layout no lo colapsa ni lo recorta.
+const blank = "⠀"
+
 // renderWord compone una palabra duplicando cada celda en horizontal
-// (píxeles de 2 columnas, como los del creeper).
+// (píxeles de 2 columnas). Los huecos usan blank en vez de espacios.
 func renderWord(word string) []string {
 	rows := make([]string, 5)
 	for r := 0; r < 5; r++ {
 		for i, ch := range word {
 			if i > 0 {
-				rows[r] += "  "
+				rows[r] += blank + blank
 			}
 			for _, c := range splashFont[ch][r] {
 				if c == '█' {
 					rows[r] += "██"
 				} else {
-					rows[r] += "  "
+					rows[r] += blank + blank
 				}
 			}
 		}
@@ -75,16 +79,16 @@ func renderWord(word string) []string {
 	return rows
 }
 
-var splashTitle = append(append(renderWord("MC-TUI"), ""), renderWord("SERVER")...)
+var splashTitle = append(append(renderWord("MC-TUI"), blank), renderWord("SERVER")...)
 
-// splashLogo es el bloque de césped de Minecraft en píxeles de colores:
-// g/G césped (verde claro/oscuro), b/t tierra (marrón/claro), d tierra
-// oscura, s piedra gris. Cada píxel se pinta como "██" coloreado.
+// splashLogo es el bloque de césped de Minecraft en píxeles:
+// g/G césped (verde claro/oscuro), b/t/d tierra (media/clara/oscura),
+// s piedra gris. Cada píxel se pinta como "██" con color hex literal.
 var splashLogo = []string{
-	"gggGggGggg",
-	"gGggGgggGg",
-	"dgdGggdgGd",
-	"ddsddgdddd",
+	"ggGgggGggg",
+	"GggGgggggG",
+	"dgGdggdggd",
+	"ddsddgddbd",
 	"bdbbtdbdbb",
 	"dbddbbdtdd",
 	"bbdsddbbdb",
@@ -92,26 +96,9 @@ var splashLogo = []string{
 	"bddbdsbddb",
 }
 
-func logoClass(c rune) string {
-	switch c {
-	case 'g':
-		return "text-green font-bold"
-	case 'G':
-		return "text-green"
-	case 'd':
-		return "text-red"
-	case 'b':
-		return "text-yellow"
-	case 't':
-		return "text-yellow font-bold"
-	default: // 's'
-		return "font-dim"
-	}
-}
-
 type logoSeg struct {
-	Text  string
-	Class string
+	Text string
+	Key  string
 }
 
 // splashLogoRows agrupa píxeles contiguos del mismo color en un solo
@@ -121,12 +108,12 @@ func splashLogoRows() [][]logoSeg {
 	for i, row := range splashLogo {
 		var segs []logoSeg
 		for _, c := range row {
-			cls := logoClass(c)
-			if n := len(segs); n > 0 && segs[n-1].Class == cls {
+			key := string(c)
+			if n := len(segs); n > 0 && segs[n-1].Key == key {
 				segs[n-1].Text += "██"
 				continue
 			}
-			segs = append(segs, logoSeg{Text: "██", Class: cls})
+			segs = append(segs, logoSeg{Text: "██", Key: key})
 		}
 		rows[i] = segs
 	}
@@ -1290,14 +1277,26 @@ templ (a *app) Render() {
 				for _, row := range splashLogoRows() {
 					<div class="flex">
 						for _, seg := range row {
-							<span class={seg.Class}>{seg.Text}</span>
+							if seg.Key == "g" {
+								<span class="text-[#7cc65c]">{seg.Text}</span>
+							} else if seg.Key == "G" {
+								<span class="text-[#4a9e31]">{seg.Text}</span>
+							} else if seg.Key == "d" {
+								<span class="text-[#5c3d24]">{seg.Text}</span>
+							} else if seg.Key == "b" {
+								<span class="text-[#8b6244]">{seg.Text}</span>
+							} else if seg.Key == "t" {
+								<span class="text-[#a0764c]">{seg.Text}</span>
+							} else {
+								<span class="text-[#9a8f8a]">{seg.Text}</span>
+							}
 						}
 					</div>
 				}
 			</div>
 			<div class="flex-col">
 				for _, line := range splashTitle {
-					<span class="text-green">{line}</span>
+					<span class="text-[#7cc65c]">{line}</span>
 				}
 			</div>
 			<span class="font-dim">Press any key to start</span>
