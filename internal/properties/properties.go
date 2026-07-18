@@ -61,7 +61,7 @@ func Load(path string) (*File, error) {
 		return &File{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("leyendo %s: %w", path, err)
+		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	return Parse(data), nil
 }
@@ -114,7 +114,7 @@ func (f *File) Bytes() []byte {
 // Save escribe el archivo en disco.
 func (f *File) Save(path string) error {
 	if err := os.WriteFile(path, f.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("escribiendo %s: %w", path, err)
+		return fmt.Errorf("writing %s: %w", path, err)
 	}
 	return nil
 }

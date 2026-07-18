@@ -49,7 +49,7 @@ func (c *Collector) Sample(pid int) (Sample, error) {
 		var err error
 		p, err = newProc(int32(pid))
 		if err != nil {
-			return Sample{}, fmt.Errorf("abriendo proceso %d: %w", pid, err)
+			return Sample{}, fmt.Errorf("opening process %d: %w", pid, err)
 		}
 		c.procs[int32(pid)] = p
 	}
@@ -57,12 +57,12 @@ func (c *Collector) Sample(pid int) (Sample, error) {
 	cpu, err := p.Percent(0)
 	if err != nil {
 		delete(c.procs, int32(pid))
-		return Sample{}, fmt.Errorf("midiendo CPU del proceso %d: %w", pid, err)
+		return Sample{}, fmt.Errorf("measuring CPU of process %d: %w", pid, err)
 	}
 	mem, err := p.MemoryInfo()
 	if err != nil {
 		delete(c.procs, int32(pid))
-		return Sample{}, fmt.Errorf("midiendo memoria del proceso %d: %w", pid, err)
+		return Sample{}, fmt.Errorf("measuring memory of process %d: %w", pid, err)
 	}
 	return Sample{CPUPercent: cpu, RSSBytes: mem.RSS}, nil
 }

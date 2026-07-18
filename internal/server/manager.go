@@ -18,9 +18,9 @@ import (
 type Status string
 
 const (
-	Stopped  Status = "detenido"
-	Running  Status = "corriendo"
-	Stopping Status = "deteniendo"
+	Stopped  Status = "stopped"
+	Running  Status = "running"
+	Stopping Status = "stopping"
 )
 
 // logBuffer es la capacidad del canal de logs; si el consumidor no lee,
@@ -116,27 +116,27 @@ func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status != Stopped {
-		return fmt.Errorf("el servidor %q ya está %s", m.inst.Name, m.status)
+		return fmt.Errorf("server %q is already %s", m.inst.Name, m.status)
 	}
 
 	cmd := m.newCmd(m.inst)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
-		return fmt.Errorf("abriendo stdin: %w", err)
+		return fmt.Errorf("opening stdin: %w", err)
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		stdin.Close()
-		return fmt.Errorf("abriendo stdout: %w", err)
+		return fmt.Errorf("opening stdout: %w", err)
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		stdin.Close()
-		return fmt.Errorf("abriendo stderr: %w", err)
+		return fmt.Errorf("opening stderr: %w", err)
 	}
 	if err := cmd.Start(); err != nil {
 		stdin.Close()
-		return fmt.Errorf("iniciando servidor %q: %w", m.inst.Name, err)
+		return fmt.Errorf("starting server %q: %w", m.inst.Name, err)
 	}
 
 	m.cmd = cmd
@@ -182,7 +182,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 	m.mu.Lock()
 	if m.status != Running {
 		m.mu.Unlock()
-		return fmt.Errorf("el servidor %q no está corriendo", m.inst.Name)
+		return fmt.Errorf("server %q is not running", m.inst.Name)
 	}
 	m.status = Stopping
 	stdin, cmd, exited := m.stdin, m.cmd, m.exited
@@ -214,10 +214,10 @@ func (m *Manager) Send(command string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.status != Running {
-		return fmt.Errorf("el servidor %q no está corriendo", m.inst.Name)
+		return fmt.Errorf("server %q is not running", m.inst.Name)
 	}
 	if _, err := io.WriteString(m.stdin, command+"\n"); err != nil {
-		return fmt.Errorf("enviando comando: %w", err)
+		return fmt.Errorf("sending command: %w", err)
 	}
 	return nil
 }

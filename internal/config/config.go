@@ -51,7 +51,7 @@ func (s *Store) Path() string { return s.path }
 func DefaultPath() (string, error) {
 	base, err := os.UserConfigDir()
 	if err != nil {
-		return "", fmt.Errorf("no se pudo resolver el directorio de configuración: %w", err)
+		return "", fmt.Errorf("could not resolve the user config directory: %w", err)
 	}
 	return filepath.Join(base, "mc-tui-server", "instances.json"), nil
 }
@@ -65,11 +65,11 @@ func (s *Store) Load() error {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("leyendo %s: %w", s.path, err)
+		return fmt.Errorf("reading %s: %w", s.path, err)
 	}
 	var instances []Instance
 	if err := json.Unmarshal(data, &instances); err != nil {
-		return fmt.Errorf("parseando %s: %w", s.path, err)
+		return fmt.Errorf("parsing %s: %w", s.path, err)
 	}
 	s.instances = instances
 	return nil
@@ -78,12 +78,12 @@ func (s *Store) Load() error {
 // Save escribe las instancias al archivo, creando los directorios padre.
 func (s *Store) Save() error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("creando directorio para %s: %w", s.path, err)
+		return fmt.Errorf("creating directory for %s: %w", s.path, err)
 	}
 	// []Instance solo contiene tipos serializables; Marshal no puede fallar.
 	data, _ := json.MarshalIndent(s.instances, "", "  ")
 	if err := os.WriteFile(s.path, data, 0o644); err != nil {
-		return fmt.Errorf("escribiendo %s: %w", s.path, err)
+		return fmt.Errorf("writing %s: %w", s.path, err)
 	}
 	return nil
 }
@@ -108,10 +108,10 @@ func (s *Store) Get(name string) (Instance, bool) {
 // Add registra una instancia nueva. Falla con nombre vacío o duplicado.
 func (s *Store) Add(inst Instance) error {
 	if inst.Name == "" {
-		return errors.New("la instancia necesita un nombre")
+		return errors.New("the instance needs a name")
 	}
 	if _, exists := s.Get(inst.Name); exists {
-		return fmt.Errorf("ya existe una instancia llamada %q", inst.Name)
+		return fmt.Errorf("an instance named %q already exists", inst.Name)
 	}
 	s.instances = append(s.instances, inst)
 	return nil
@@ -125,7 +125,7 @@ func (s *Store) Update(inst Instance) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("no existe una instancia llamada %q", inst.Name)
+	return fmt.Errorf("no instance named %q", inst.Name)
 }
 
 // Remove elimina la instancia por nombre. Falla si no existe.
@@ -136,5 +136,5 @@ func (s *Store) Remove(name string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("no existe una instancia llamada %q", name)
+	return fmt.Errorf("no instance named %q", name)
 }

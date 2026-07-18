@@ -37,6 +37,32 @@ const (
 
 var wizTypes = []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric}
 
+// Arte ASCII del splash: título MC-TUI / SERVER y cara de creeper.
+var splashTitle = []string{
+	"███╗   ███╗ ██████╗        ████████╗██╗   ██╗██╗",
+	"████╗ ████║██╔════╝        ╚══██╔══╝██║   ██║██║",
+	"██╔████╔██║██║      █████╗    ██║   ██║   ██║██║",
+	"██║╚██╔╝██║██║      ╚════╝    ██║   ██║   ██║██║",
+	"██║ ╚═╝ ██║╚██████╗           ██║   ╚██████╔╝██║",
+	"╚═╝     ╚═╝ ╚═════╝           ╚═╝    ╚═════╝ ╚═╝",
+	"",
+	"███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ ",
+	"██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗",
+	"███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝",
+	"╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗",
+	"███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║",
+	"╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝",
+}
+
+var splashCreeper = []string{
+	"  ████    ████  ",
+	"  ████    ████  ",
+	"      ████      ",
+	"    ████████    ",
+	"    ████████    ",
+	"    ██    ██    ",
+}
+
 type logEntry struct {
 	name string
 	line string
@@ -46,6 +72,10 @@ type app struct {
 	store    *config.Store
 	dataDir  string
 	managers *tui.State[[]*server.Manager]
+	// splash se muestra al arrancar hasta pulsar una tecla o agotar los
+	// ticks del timer de refresh. splashTicks solo lo toca ese timer.
+	splash      *tui.State[bool]
+	splashTicks int
 	// logCh agrega los logs de todas las instancias: los watchers se
 	// registran al montar, así que un canal único permite añadir
 	// instancias en caliente.
@@ -102,6 +132,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		store:     store,
 		dataDir:   filepath.Dir(store.Path()),
 		managers:  tui.NewState(managers),
+		splash:    tui.NewState(true),
 		logCh:     make(chan logEntry, 2048),
 		selected:  tui.NewState(0),
 		statuses:  tui.NewState(statuses),
@@ -190,6 +221,13 @@ func (a *app) appendLog(name, line string) {
 }
 
 func (a *app) refreshStatuses() {
+	// Auto-descarta el splash tras ~3s (6 ticks de 500ms).
+	if a.splash.Get() {
+		a.splashTicks++
+		if a.splashTicks >= 6 {
+			a.splash.Set(false)
+		}
+	}
 	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
 		for _, mgr := range a.managers.Get() {
 			m[mgr.Instance().Name] = mgr.Status()
@@ -337,7 +375,7 @@ func (a *app) wizFail(gen int, err error) {
 func (a *app) wizFetchVersions() {
 	typ := wizTypes[a.wizTypeIdx.Get()]
 	gen := a.wizGen.Get()
-	a.wizMsg.Set(fmt.Sprintf("Consultando versiones de %s...", typ))
+	a.wizMsg.Set(fmt.Sprintf("Fetching %s versions...", typ))
 	a.wizStep.Set(wizLoading)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -353,7 +391,7 @@ func (a *app) wizFetchVersions() {
 			return
 		}
 		if len(versions) == 0 {
-			a.wizFail(gen, fmt.Errorf("la API de %s no devolvió versiones", typ))
+			a.wizFail(gen, fmt.Errorf("the %s API returned no versions", typ))
 			return
 		}
 		if a.wizGen.Get() != gen {
@@ -376,11 +414,11 @@ func validNameChar(r rune) bool {
 func (a *app) wizSubmitName() {
 	name := a.wizName.Get()
 	if name == "" {
-		a.wizMsg.Set("El nombre no puede estar vacío")
+		a.wizMsg.Set("The name cannot be empty")
 		return
 	}
 	if _, exists := a.store.Get(name); exists {
-		a.wizMsg.Set(fmt.Sprintf("Ya existe una instancia llamada %q", name))
+		a.wizMsg.Set(fmt.Sprintf("An instance named %q already exists", name))
 		return
 	}
 	a.wizMsg.Set("")
@@ -401,7 +439,7 @@ func (a *app) wizStartDownload() {
 	name := a.wizName.Get()
 	memMB := a.wizMemoryMB()
 	gen := a.wizGen.Get()
-	a.wizMsg.Set("Resolviendo URL de descarga...")
+	a.wizMsg.Set("Resolving download URL...")
 	a.wizStep.Set(wizDownload)
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
@@ -420,10 +458,10 @@ func (a *app) wizStartDownload() {
 		jar := filepath.Join(dir, "server.jar")
 		err = download.DownloadFile(ctx, nil, url, jar, func(done, total int64) {
 			if total > 0 {
-				a.wizMsg.Set(fmt.Sprintf("Descargando... %d%% (%dMB de %dMB)",
+				a.wizMsg.Set(fmt.Sprintf("Downloading... %d%% (%dMB of %dMB)",
 					done*100/total, done/(1024*1024), total/(1024*1024)))
 			} else {
-				a.wizMsg.Set(fmt.Sprintf("Descargando... %dMB", done/(1024*1024)))
+				a.wizMsg.Set(fmt.Sprintf("Downloading... %dMB", done/(1024*1024)))
 			}
 		})
 		if err != nil {
@@ -456,7 +494,7 @@ func (a *app) wizStartDownload() {
 		a.managers.Update(func(ms []*server.Manager) []*server.Manager {
 			return append(ms, mgr)
 		})
-		a.appendLog(name, fmt.Sprintf("[mc-tui] Instancia creada: %s %s (%d MB)", typ, version, memMB))
+		a.appendLog(name, fmt.Sprintf("[mc-tui] Instance created: %s %s (%d MB)", typ, version, memMB))
 		a.selected.Set(len(a.managers.Get()) - 1)
 		a.wizClose()
 	}()
@@ -566,7 +604,7 @@ func (a *app) wizKeyMap() tui.KeyMap {
 		}
 	case wizEula:
 		return tui.KeyMap{
-			tui.OnStop(tui.Rune('s'), func(ke tui.KeyEvent) { a.wizStartDownload() }),
+			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.wizStartDownload() }),
 			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizClose() }),
 			esc,
 		}
@@ -715,7 +753,7 @@ func (a *app) fmCommitEdit() {
 	a.fmDirty.Set(true)
 	a.fmEditing.Set(false)
 	a.fmRev.Update(func(r int) int { return r + 1 })
-	a.fmMsg.Set("Cambio en memoria; pulsa w para guardar")
+	a.fmMsg.Set("Changed in memory; press w to save")
 }
 
 func (a *app) fmSave() {
@@ -729,7 +767,7 @@ func (a *app) fmSave() {
 		return
 	}
 	a.fmDirty.Set(false)
-	a.fmMsg.Set("Guardado. Reinicia el servidor para aplicar los cambios")
+	a.fmMsg.Set("Saved. Restart the server to apply the changes")
 }
 
 // fmAskDelete pide confirmación para borrar el mundo o plugin seleccionado.
@@ -739,7 +777,7 @@ func (a *app) fmAskDelete() {
 		return
 	}
 	if mgr.Status() != server.Stopped {
-		a.fmMsg.Set("Detén el servidor antes de borrar archivos")
+		a.fmMsg.Set("Stop the server before deleting files")
 		return
 	}
 	var name string
@@ -777,7 +815,7 @@ func (a *app) fmDoDelete() {
 		a.fmMsg.Set("Error: " + err.Error())
 		return
 	}
-	a.fmMsg.Set(fmt.Sprintf("%q eliminado", name))
+	a.fmMsg.Set(fmt.Sprintf("%q deleted", name))
 	a.fmWorldIdx.Set(0)
 	a.fmPluginIdx.Set(0)
 	a.fmReloadLists(inst)
@@ -785,26 +823,26 @@ func (a *app) fmDoDelete() {
 
 func (a *app) fmTitle() string {
 	_ = a.fmRev.Get() // dependencia explícita: re-render tras mutar fmProps
-	title := fmt.Sprintf("Archivos — %s · %s", a.currentName(), a.fmTabName())
+	title := fmt.Sprintf("Files — %s · %s", a.currentName(), a.fmTabName())
 	if a.fmDirty.Get() {
-		title += " (sin guardar)"
+		title += " (unsaved)"
 	}
 	return title
 }
 
 func (a *app) fmHelp() string {
 	if a.fmTab.Get() == 0 {
-		return "↑/↓ elegir | Enter editar | w guardar | 1/2/3 o Tab pestaña | Esc cerrar"
+		return "↑/↓ select | Enter edit | w save | 1/2/3 or Tab switch | Esc close"
 	}
-	return "↑/↓ elegir | d borrar | 1/2/3 o Tab pestaña | Esc cerrar"
+	return "↑/↓ select | d delete | 1/2/3 or Tab switch | Esc close"
 }
 
 func (a *app) fmTabName() string {
 	switch a.fmTab.Get() {
 	case 0:
-		return "Propiedades"
+		return "Properties"
 	case 1:
-		return "Mundos"
+		return "Worlds"
 	default:
 		return "Plugins/Mods"
 	}
@@ -831,7 +869,7 @@ func (a *app) fmKeyMap() tui.KeyMap {
 	}
 	if a.fmConfirm.Get() != "" {
 		return tui.KeyMap{
-			tui.OnStop(tui.Rune('s'), func(ke tui.KeyEvent) { a.fmDoDelete() }),
+			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.fmDoDelete() }),
 			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
 			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
 		}
@@ -865,6 +903,14 @@ func (a *app) fmKeyMap() tui.KeyMap {
 }
 
 func (a *app) KeyMap() tui.KeyMap {
+	if a.splash.Get() {
+		dismiss := func(ke tui.KeyEvent) { a.splash.Set(false) }
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, dismiss),
+			tui.OnStop(tui.KeyEnter, dismiss),
+			tui.OnStop(tui.KeyEscape, dismiss),
+		}
+	}
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
 	}
@@ -939,7 +985,7 @@ func (a *app) currentLogs() []string {
 func (a *app) currentName() string {
 	mgr := a.current()
 	if mgr == nil {
-		return "sin instancia"
+		return "no instance"
 	}
 	return mgr.Instance().Name
 }
@@ -947,160 +993,174 @@ func (a *app) currentName() string {
 func (a *app) wizStepTitle() string {
 	switch a.wizStep.Get() {
 	case wizType:
-		return "1/5 · Tipo de servidor"
+		return "1/5 · Server type"
 	case wizLoading:
-		return "2/5 · Consultando versiones"
+		return "2/5 · Fetching versions"
 	case wizVersion:
-		return "2/5 · Versión"
+		return "2/5 · Version"
 	case wizName:
-		return "3/5 · Nombre de la instancia"
+		return "3/5 · Instance name"
 	case wizMem:
-		return "4/5 · Memoria (MB)"
+		return "4/5 · Memory (MB)"
 	case wizEula:
-		return "5/5 · EULA de Minecraft"
+		return "5/5 · Minecraft EULA"
 	case wizDownload:
-		return "Descargando"
+		return "Downloading"
 	default:
 		return "Error"
 	}
 }
 
 templ (a *app) Render() {
-	<div class="flex-col h-full p-1 gap-1">
-		<div class="flex justify-between shrink-0">
-			<span class="font-bold text-cyan">mc-tui-server</span>
-			<span class="font-dim">{fmt.Sprintf("%d instancias", len(a.managers.Get()))}</span>
+	if a.splash.Get() {
+		<div class="flex-col h-full items-center justify-center">
+			for _, line := range splashCreeper {
+				<span class="text-green font-bold">{line}</span>
+			}
+			<span class="shrink-0">{" "}</span>
+			for _, line := range splashTitle {
+				<span class="text-green">{line}</span>
+			}
+			<span class="shrink-0">{" "}</span>
+			<span class="font-dim">Press any key to start</span>
 		</div>
-		<div class="flex gap-1 flex-grow">
-			<div class="flex-col border-rounded p-1 shrink-0" minWidth={30}>
-				<span class="font-bold shrink-0">Instancias</span>
-				if len(a.managers.Get()) == 0 {
-					<span class="font-dim">No hay instancias.</span>
-					<span class="font-dim">Pulsa n para crear una</span>
-				}
-				for i, mgr := range a.managers.Get() {
-					<div class="flex-col">
-						<div class="flex justify-between">
-							<span class={a.rowClass(i)}>{mgr.Instance().Name}</span>
-							<span class={a.statusClass(mgr.Instance().Name)}>{a.statusText(mgr.Instance().Name)}</span>
+	} else {
+		<div class="flex-col h-full p-1 gap-1">
+			<div class="flex justify-between shrink-0">
+				<span class="font-bold text-cyan">mc-tui-server</span>
+				<span class="font-dim">{fmt.Sprintf("%d instances", len(a.managers.Get()))}</span>
+			</div>
+			<div class="flex gap-1 flex-grow">
+				<div class="flex-col border-rounded p-1 shrink-0" minWidth={30}>
+					<span class="font-bold shrink-0">Instances</span>
+					if len(a.managers.Get()) == 0 {
+						<span class="font-dim">No instances yet.</span>
+						<span class="font-dim">Press n to create one</span>
+					}
+					for i, mgr := range a.managers.Get() {
+						<div class="flex-col">
+							<div class="flex justify-between">
+								<span class={a.rowClass(i)}>{mgr.Instance().Name}</span>
+								<span class={a.statusClass(mgr.Instance().Name)}>{a.statusText(mgr.Instance().Name)}</span>
+							</div>
+							if a.metricText(mgr.Instance().Name) != "" {
+								<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
+							}
 						</div>
-						if a.metricText(mgr.Instance().Name) != "" {
-							<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
+					}
+				</div>
+				if a.wizStep.Get() != wizOff {
+					<div class="flex-col border-rounded border-cyan p-1 flex-grow gap-1">
+						<span class="font-bold text-cyan shrink-0">{fmt.Sprintf("New instance — %s", a.wizStepTitle())}</span>
+						if a.wizStep.Get() == wizType {
+							for _, item := range a.wizTypeItems() {
+								if item.Sel {
+									<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+								} else {
+									<span>{fmt.Sprintf("  %s", item.Text)}</span>
+								}
+							}
+							<span class="font-dim">↑/↓ choose | Enter continue | Esc cancel</span>
+						}
+						if a.wizStep.Get() == wizLoading {
+							<span class="text-yellow">{a.wizMsg.Get()}</span>
+							<span class="font-dim">Esc cancel</span>
+						}
+						if a.wizStep.Get() == wizVersion {
+							for _, item := range a.wizVersionItems() {
+								if item.Sel {
+									<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+								} else {
+									<span>{fmt.Sprintf("  %s", item.Text)}</span>
+								}
+							}
+							<span class="font-dim">↑/↓/PgUp/PgDn choose | Enter continue | Esc cancel</span>
+						}
+						if a.wizStep.Get() == wizName {
+							<div class="flex gap-1">
+								<span class="text-cyan font-bold">Name:</span>
+								<span>{a.wizName.Get()}</span>
+								<span class="text-cyan blink">_</span>
+							</div>
+							if a.wizMsg.Get() != "" {
+								<span class="text-red">{a.wizMsg.Get()}</span>
+							}
+							<span class="font-dim">letters, digits, - and _ | Enter continue | Esc cancel</span>
+						}
+						if a.wizStep.Get() == wizMem {
+							<div class="flex gap-1">
+								<span class="text-cyan font-bold">Memory (MB):</span>
+								<span>{a.wizMemory.Get()}</span>
+								<span class="text-cyan blink">_</span>
+							</div>
+							<span class="font-dim">empty = 2048 | Enter continue | Esc cancel</span>
+						}
+						if a.wizStep.Get() == wizEula {
+							<span>To run the server you must accept the Minecraft EULA:</span>
+							<span class="text-cyan">{"https://aka.ms/MinecraftEULA"}</span>
+							<span class="font-bold">Accept? (y = yes, download | n/Esc = cancel)</span>
+						}
+						if a.wizStep.Get() == wizDownload {
+							<span class="text-yellow">{a.wizMsg.Get()}</span>
+						}
+						if a.wizStep.Get() == wizError {
+							<span class="text-red">{a.wizMsg.Get()}</span>
+							<span class="font-dim">Esc close</span>
+						}
+					</div>
+				} else if a.fmOpen.Get() {
+					<div class="flex-col border-rounded border-cyan p-1 flex-grow">
+						<span class="font-bold text-cyan shrink-0">{a.fmTitle()}</span>
+						<span class="font-dim shrink-0">1 Properties | 2 Worlds | 3 Plugins/Mods</span>
+						if len(a.fmItems()) == 0 {
+							<span class="font-dim">(empty)</span>
+						}
+						for _, item := range a.fmItems() {
+							if item.Sel {
+								<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+							} else {
+								<span>{fmt.Sprintf("  %s", item.Text)}</span>
+							}
+						}
+						if a.fmEditing.Get() {
+							<div class="flex gap-1">
+								<span class="text-cyan font-bold">{fmt.Sprintf("%s =", a.fmSelectedKey())}</span>
+								<span>{a.fmEditText.Get()}</span>
+								<span class="text-cyan blink">_</span>
+								<span class="font-dim">(Enter applies | Esc cancels)</span>
+							</div>
+						}
+						if a.fmConfirm.Get() != "" {
+							<span class="text-red font-bold">{fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())}</span>
+						}
+						if a.fmMsg.Get() != "" {
+							<span class="text-yellow">{a.fmMsg.Get()}</span>
+						}
+						<span class="font-dim shrink-0">{a.fmHelp()}</span>
+					</div>
+				} else {
+					<div
+						class="flex-col border-rounded p-1 flex-grow"
+						scrollable={tui.ScrollVertical}
+						scrollOffset={0, math.MaxInt}
+					>
+						<span class="font-bold shrink-0">{fmt.Sprintf("Console — %s", a.currentName())}</span>
+						for _, line := range a.currentLogs() {
+							<span>{line}</span>
 						}
 					</div>
 				}
 			</div>
-			if a.wizStep.Get() != wizOff {
-				<div class="flex-col border-rounded border-cyan p-1 flex-grow gap-1">
-					<span class="font-bold text-cyan shrink-0">{fmt.Sprintf("Nueva instancia — %s", a.wizStepTitle())}</span>
-					if a.wizStep.Get() == wizType {
-						for _, item := range a.wizTypeItems() {
-							if item.Sel {
-								<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
-							} else {
-								<span>{fmt.Sprintf("  %s", item.Text)}</span>
-							}
-						}
-						<span class="font-dim">↑/↓ elegir | Enter continuar | Esc cancelar</span>
-					}
-					if a.wizStep.Get() == wizLoading {
-						<span class="text-yellow">{a.wizMsg.Get()}</span>
-						<span class="font-dim">Esc cancelar</span>
-					}
-					if a.wizStep.Get() == wizVersion {
-						for _, item := range a.wizVersionItems() {
-							if item.Sel {
-								<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
-							} else {
-								<span>{fmt.Sprintf("  %s", item.Text)}</span>
-							}
-						}
-						<span class="font-dim">↑/↓/PgUp/PgDn elegir | Enter continuar | Esc cancelar</span>
-					}
-					if a.wizStep.Get() == wizName {
-						<div class="flex gap-1">
-							<span class="text-cyan font-bold">Nombre:</span>
-							<span>{a.wizName.Get()}</span>
-							<span class="text-cyan blink">_</span>
-						</div>
-						if a.wizMsg.Get() != "" {
-							<span class="text-red">{a.wizMsg.Get()}</span>
-						}
-						<span class="font-dim">letras, números, - y _ | Enter continuar | Esc cancelar</span>
-					}
-					if a.wizStep.Get() == wizMem {
-						<div class="flex gap-1">
-							<span class="text-cyan font-bold">Memoria (MB):</span>
-							<span>{a.wizMemory.Get()}</span>
-							<span class="text-cyan blink">_</span>
-						</div>
-						<span class="font-dim">vacío = 2048 | Enter continuar | Esc cancelar</span>
-					}
-					if a.wizStep.Get() == wizEula {
-						<span>Para ejecutar el servidor debes aceptar el EULA de Minecraft:</span>
-						<span class="text-cyan">{"https://aka.ms/MinecraftEULA"}</span>
-						<span class="font-bold">¿Aceptas? (s = sí y descargar, n/Esc = cancelar)</span>
-					}
-					if a.wizStep.Get() == wizDownload {
-						<span class="text-yellow">{a.wizMsg.Get()}</span>
-					}
-					if a.wizStep.Get() == wizError {
-						<span class="text-red">{a.wizMsg.Get()}</span>
-						<span class="font-dim">Esc cerrar</span>
-					}
-				</div>
-			} else if a.fmOpen.Get() {
-				<div class="flex-col border-rounded border-cyan p-1 flex-grow">
-					<span class="font-bold text-cyan shrink-0">{a.fmTitle()}</span>
-					<span class="font-dim shrink-0">1 Propiedades | 2 Mundos | 3 Plugins/Mods</span>
-					if len(a.fmItems()) == 0 {
-						<span class="font-dim">(no hay elementos)</span>
-					}
-					for _, item := range a.fmItems() {
-						if item.Sel {
-							<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
-						} else {
-							<span>{fmt.Sprintf("  %s", item.Text)}</span>
-						}
-					}
-					if a.fmEditing.Get() {
-						<div class="flex gap-1">
-							<span class="text-cyan font-bold">{fmt.Sprintf("%s =", a.fmSelectedKey())}</span>
-							<span>{a.fmEditText.Get()}</span>
-							<span class="text-cyan blink">_</span>
-							<span class="font-dim">(Enter aplica | Esc cancela)</span>
-						</div>
-					}
-					if a.fmConfirm.Get() != "" {
-						<span class="text-red font-bold">{fmt.Sprintf("¿Borrar %q definitivamente? (s = sí, n = no)", a.fmConfirm.Get())}</span>
-					}
-					if a.fmMsg.Get() != "" {
-						<span class="text-yellow">{a.fmMsg.Get()}</span>
-					}
-					<span class="font-dim shrink-0">{a.fmHelp()}</span>
+			if a.cmdActive.Get() {
+				<div class="flex gap-1 shrink-0 px-1">
+					<span class="text-cyan font-bold">{fmt.Sprintf("%s >", a.currentName())}</span>
+					<span>{a.cmdText.Get()}</span>
+					<span class="text-cyan blink">_</span>
+					<span class="font-dim">(Enter sends | Esc closes)</span>
 				</div>
 			} else {
-				<div
-					class="flex-col border-rounded p-1 flex-grow"
-					scrollable={tui.ScrollVertical}
-					scrollOffset={0, math.MaxInt}
-				>
-					<span class="font-bold shrink-0">{fmt.Sprintf("Consola — %s", a.currentName())}</span>
-					for _, line := range a.currentLogs() {
-						<span>{line}</span>
-					}
-				</div>
+				<span class="font-dim shrink-0">↑/↓ select | s start | x stop | r restart | c/Enter command | e files | n new | q quit</span>
 			}
 		</div>
-		if a.cmdActive.Get() {
-			<div class="flex gap-1 shrink-0 px-1">
-				<span class="text-cyan font-bold">{fmt.Sprintf("%s >", a.currentName())}</span>
-				<span>{a.cmdText.Get()}</span>
-				<span class="text-cyan blink">_</span>
-				<span class="font-dim">(Enter envía | Esc cierra)</span>
-			</div>
-		} else {
-			<span class="font-dim shrink-0">↑/↓ seleccionar | s iniciar | x detener | r reiniciar | c/Enter comando | e archivos | n nueva | q salir</span>
-		}
-	</div>
+	}
 }

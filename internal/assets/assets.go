@@ -17,7 +17,7 @@ import (
 // nunca se opere fuera del directorio de la instancia.
 func validName(name string) error {
 	if name == "" || name == ".." || strings.ContainsAny(name, `/\`) {
-		return fmt.Errorf("nombre inválido: %q", name)
+		return fmt.Errorf("invalid name: %q", name)
 	}
 	return nil
 }
@@ -30,7 +30,7 @@ func Worlds(dir string) ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("listando %s: %w", dir, err)
+		return nil, fmt.Errorf("listing %s: %w", dir, err)
 	}
 	var out []string
 	for _, e := range entries {
@@ -70,7 +70,7 @@ func Plugins(dir string, t config.ServerType) ([]string, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("listando %s: %w", filepath.Join(dir, sub), err)
+		return nil, fmt.Errorf("listing %s: %w", filepath.Join(dir, sub), err)
 	}
 	var out []string
 	for _, e := range entries {
@@ -90,10 +90,10 @@ func DeleteWorld(dir, name string) error {
 	}
 	target := filepath.Join(dir, name)
 	if _, err := os.Stat(filepath.Join(target, "level.dat")); err != nil {
-		return fmt.Errorf("%q no es una carpeta de mundo (falta level.dat)", name)
+		return fmt.Errorf("%q is not a world folder (missing level.dat)", name)
 	}
 	if err := os.RemoveAll(target); err != nil {
-		return fmt.Errorf("borrando el mundo %q: %w", name, err)
+		return fmt.Errorf("deleting world %q: %w", name, err)
 	}
 	return nil
 }
@@ -104,14 +104,14 @@ func DeletePlugin(dir string, t config.ServerType, name string) error {
 		return err
 	}
 	if !strings.HasSuffix(name, ".jar") {
-		return fmt.Errorf("%q no es un .jar", name)
+		return fmt.Errorf("%q is not a .jar file", name)
 	}
 	sub, ok := PluginsDir(t)
 	if !ok {
-		return fmt.Errorf("el tipo %q no soporta plugins/mods", t)
+		return fmt.Errorf("server type %q does not support plugins/mods", t)
 	}
 	if err := os.Remove(filepath.Join(dir, sub, name)); err != nil {
-		return fmt.Errorf("borrando %q: %w", name, err)
+		return fmt.Errorf("deleting %q: %w", name, err)
 	}
 	return nil
 }

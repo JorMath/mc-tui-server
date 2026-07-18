@@ -81,11 +81,11 @@ func (v *Vanilla) ResolveJarURL(ctx context.Context, version string) (string, er
 			return "", err
 		}
 		if detail.Downloads.Server.URL == "" {
-			return "", fmt.Errorf("la versión %s no tiene jar de servidor", version)
+			return "", fmt.Errorf("version %s has no server jar", version)
 		}
 		return detail.Downloads.Server.URL, nil
 	}
-	return "", fmt.Errorf("versión %q no encontrada en el manifiesto de Mojang", version)
+	return "", fmt.Errorf("version %q not found in the Mojang manifest", version)
 }
 
 // --- Paper (PaperMC v2) ----------------------------------------------------
@@ -132,7 +132,7 @@ func (p *Paper) ResolveJarURL(ctx context.Context, version string) (string, erro
 		return "", err
 	}
 	if len(builds.Builds) == 0 {
-		return "", fmt.Errorf("la versión %s de Paper no tiene builds", version)
+		return "", fmt.Errorf("Paper version %s has no builds", version)
 	}
 	// Preferir el build estable (canal "default") más reciente; si no hay,
 	// usar el último build disponible.
@@ -218,14 +218,14 @@ func (f *Fabric) ResolveJarURL(ctx context.Context, version string) (string, err
 		return "", err
 	}
 	if len(loaders) == 0 {
-		return "", fmt.Errorf("no hay loader estable de Fabric")
+		return "", fmt.Errorf("no stable Fabric loader available")
 	}
 	installers, err := f.stableVersions(ctx, "/v2/versions/installer")
 	if err != nil {
 		return "", err
 	}
 	if len(installers) == 0 {
-		return "", fmt.Errorf("no hay installer estable de Fabric")
+		return "", fmt.Errorf("no stable Fabric installer available")
 	}
 	return fmt.Sprintf("%s/v2/versions/loader/%s/%s/%s/server/jar",
 		base(f.BaseURL, defaultFabricBase), version, loaders[0], installers[0]), nil
