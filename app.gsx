@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
+	"strconv"
+	"time"
 	"github.com/JorMath/mc-tui-server/internal/assets"
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
@@ -11,10 +15,6 @@ import (
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	"github.com/JorMath/mc-tui-server/internal/properties"
 	"github.com/JorMath/mc-tui-server/internal/server"
-	"os"
-	"path/filepath"
-	"strconv"
-	"time"
 	tui "github.com/grindlemire/go-tui"
 )
 
@@ -77,13 +77,60 @@ func renderWord(word string) []string {
 
 var splashTitle = append(append(renderWord("MC-TUI"), ""), renderWord("SERVER")...)
 
-var splashCreeper = []string{
-	"  ████    ████  ",
-	"  ████    ████  ",
-	"      ████      ",
-	"    ████████    ",
-	"    ████████    ",
-	"    ██    ██    ",
+// splashLogo es el bloque de césped de Minecraft en píxeles de colores:
+// g/G césped (verde claro/oscuro), b/t tierra (marrón/claro), d tierra
+// oscura, s piedra gris. Cada píxel se pinta como "██" coloreado.
+var splashLogo = []string{
+	"gggGggGggg",
+	"gGggGgggGg",
+	"dgdGggdgGd",
+	"ddsddgdddd",
+	"bdbbtdbdbb",
+	"dbddbbdtdd",
+	"bbdsddbbdb",
+	"dtbdbddbbd",
+	"bddbdsbddb",
+}
+
+func logoClass(c rune) string {
+	switch c {
+	case 'g':
+		return "text-green font-bold"
+	case 'G':
+		return "text-green"
+	case 'd':
+		return "text-red"
+	case 'b':
+		return "text-yellow"
+	case 't':
+		return "text-yellow font-bold"
+	default: // 's'
+		return "font-dim"
+	}
+}
+
+type logoSeg struct {
+	Text  string
+	Class string
+}
+
+// splashLogoRows agrupa píxeles contiguos del mismo color en un solo
+// segmento para no crear un span por píxel.
+func splashLogoRows() [][]logoSeg {
+	rows := make([][]logoSeg, len(splashLogo))
+	for i, row := range splashLogo {
+		var segs []logoSeg
+		for _, c := range row {
+			cls := logoClass(c)
+			if n := len(segs); n > 0 && segs[n-1].Class == cls {
+				segs[n-1].Text += "██"
+				continue
+			}
+			segs = append(segs, logoSeg{Text: "██", Class: cls})
+		}
+		rows[i] = segs
+	}
+	return rows
 }
 
 type logEntry struct {
@@ -1240,8 +1287,12 @@ templ (a *app) Render() {
 	if a.splash.Get() {
 		<div class="flex-col h-full items-center justify-center gap-1">
 			<div class="flex-col">
-				for _, line := range splashCreeper {
-					<span class="text-green font-bold">{line}</span>
+				for _, row := range splashLogoRows() {
+					<div class="flex">
+						for _, seg := range row {
+							<span class={seg.Class}>{seg.Text}</span>
+						}
+					</div>
 				}
 			</div>
 			<div class="flex-col">
