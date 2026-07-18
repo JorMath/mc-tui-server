@@ -24,8 +24,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   the wizard downloads the pack's server files and overrides, plus the
   Fabric server launcher the pack requires. Fabric modpacks only.
 - **Multi-instance** — manage as many local servers as you want; configs
-  are stored as JSON in your user config directory. Rename or delete
-  instances (with confirmation) right from the sidebar.
+  are stored as JSON in your user config directory. Rename, delete (with
+  confirmation) or change the memory of an instance right from the sidebar.
 
 ## Requirements
 
@@ -101,6 +101,7 @@ mc-tui-server -version   # print the version and exit
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install |
 | `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a Fabric modpack |
+| `M` | change the instance's memory (MB, applies on next start) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
 | `q` | quit (running servers are stopped gracefully) |

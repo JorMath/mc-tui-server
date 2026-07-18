@@ -372,7 +372,7 @@ func FooterBar(a *app) *FooterBarView {
 	var view FooterBarView
 	var watchers []tui.Watcher
 
-	var __tui_27 *HintsRowView
+	var __tui_37 *HintsRowView
 	var __tui_0 *tui.Element
 	if a.cmdActive.Get() {
 		__tui_1 := tui.New(
@@ -479,7 +479,7 @@ func FooterBar(a *app) *FooterBarView {
 		if __tui_0 == nil {
 			__tui_0 = __tui_10
 		}
-	} else if a.delTarget.Get() != "" {
+	} else if a.memActive.Get() {
 		__tui_20 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
@@ -487,60 +487,116 @@ func FooterBar(a *app) *FooterBarView {
 			tui.WithPaddingTRBL(0, 1, 0, 1),
 		)
 		__tui_21 := tui.New(
-			tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			tui.WithText(fmt.Sprintf("Memory (MB) for %s:", a.currentName())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
 		__tui_20.AddChild(__tui_21)
 		__tui_22 := tui.New(
-			tui.WithText("y"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			tui.WithText(a.memText.Get()),
 		)
 		__tui_20.AddChild(__tui_22)
 		__tui_23 := tui.New(
-			tui.WithText("delete"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
 		__tui_20.AddChild(__tui_23)
-		__tui_24 := tui.New(
-			tui.WithText("|"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_20.AddChild(__tui_24)
+		if a.memMsg.Get() != "" {
+			__tui_24 := tui.New(
+				tui.WithText(a.memMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+			)
+			__tui_20.AddChild(__tui_24)
+		}
 		__tui_25 := tui.New(
-			tui.WithText("n/Esc"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			tui.WithText("Enter"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
 		__tui_20.AddChild(__tui_25)
 		__tui_26 := tui.New(
-			tui.WithText("keep"),
+			tui.WithText("applies on next start"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
 		__tui_20.AddChild(__tui_26)
+		__tui_27 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_20.AddChild(__tui_27)
+		__tui_28 := tui.New(
+			tui.WithText("Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_20.AddChild(__tui_28)
+		__tui_29 := tui.New(
+			tui.WithText("cancels"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_20.AddChild(__tui_29)
 		if __tui_0 == nil {
 			__tui_0 = __tui_20
 		}
-	} else {
-		__tui_27 = HintsRow(a.mainHints(), false)
+	} else if a.delTarget.Get() != "" {
+		__tui_30 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_31 := tui.New(
+			tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_30.AddChild(__tui_31)
+		__tui_32 := tui.New(
+			tui.WithText("y"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_30.AddChild(__tui_32)
+		__tui_33 := tui.New(
+			tui.WithText("delete"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_30.AddChild(__tui_33)
+		__tui_34 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_30.AddChild(__tui_34)
+		__tui_35 := tui.New(
+			tui.WithText("n/Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_30.AddChild(__tui_35)
+		__tui_36 := tui.New(
+			tui.WithText("keep"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_30.AddChild(__tui_36)
 		if __tui_0 == nil {
-			__tui_0 = __tui_27.Root
+			__tui_0 = __tui_30
+		}
+	} else {
+		__tui_37 = HintsRow(a.mainHints(), false)
+		if __tui_0 == nil {
+			__tui_0 = __tui_37.Root
 		}
 	}
 
-	if __tui_27 != nil {
-		watchers = append(watchers, __tui_27.GetWatchers()...)
+	if __tui_37 != nil {
+		watchers = append(watchers, __tui_37.GetWatchers()...)
 	}
 
 	__bindApp := func(app *tui.App) {
-		if __tui_27 != nil {
-			if binder, ok := any(__tui_27).(tui.AppBinder); ok {
+		if __tui_37 != nil {
+			if binder, ok := any(__tui_37).(tui.AppBinder); ok {
 				binder.BindApp(app)
 			}
 		}
 	}
 
 	__unbindApp := func() {
-		if __tui_27 != nil {
-			if unbinder, ok := any(__tui_27).(tui.AppUnbinder); ok {
+		if __tui_37 != nil {
+			if unbinder, ok := any(__tui_37).(tui.AppUnbinder); ok {
 				unbinder.UnbindApp()
 			}
 		}

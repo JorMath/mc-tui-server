@@ -96,6 +96,11 @@ type app struct {
 	renMsg    *tui.State[string]
 	delTarget *tui.State[string]
 
+	// Editor de memoria por instancia (v0.1.2), mismo patrón que el rename.
+	memActive *tui.State[bool]
+	memText   *tui.State[string]
+	memMsg    *tui.State[string]
+
 	collector *metrics.Collector
 	samples   *tui.State[map[string]metrics.Sample]
 	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
@@ -172,6 +177,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		renText:   newState(&reg, ""),
 		renMsg:    newState(&reg, ""),
 		delTarget: newState(&reg, ""),
+		memActive: newState(&reg, false),
+		memText:   newState(&reg, ""),
+		memMsg:    newState(&reg, ""),
 		collector: metrics.NewCollector(),
 		samples:   newState(&reg, map[string]metrics.Sample{}),
 		lastPIDs:  map[string]int{},
@@ -302,7 +310,7 @@ func (a *app) mainHints() []hint {
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
-		{"n", "new"}, {"R", "rename"}, {"d", "delete"}, {"q", "quit"},
+		{"n", "new"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
 	}
 }
 
@@ -337,6 +345,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.renActive.Get() {
 		return a.renKeyMap()
 	}
+	if a.memActive.Get() {
+		return a.memKeyMap()
+	}
 	if a.delTarget.Get() != "" {
 		return a.delKeyMap()
 	}
@@ -348,6 +359,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
 		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
 		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
+		tui.On(tui.Rune('M'), func(ke tui.KeyEvent) { a.memOpen() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),

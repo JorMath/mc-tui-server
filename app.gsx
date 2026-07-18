@@ -102,6 +102,20 @@ templ FooterBar(a *app) {
 			<span class="text-cyan font-bold">Esc</span>
 			<span class="font-dim">cancels</span>
 		</div>
+	} else if a.memActive.Get() {
+		<div class="flex gap-1 shrink-0 px-1">
+			<span class="text-cyan font-bold">{fmt.Sprintf("Memory (MB) for %s:", a.currentName())}</span>
+			<span>{a.memText.Get()}</span>
+			<span class="text-cyan blink">_</span>
+			if a.memMsg.Get() != "" {
+				<span class="text-red">{a.memMsg.Get()}</span>
+			}
+			<span class="text-cyan font-bold">Enter</span>
+			<span class="font-dim">applies on next start</span>
+			<span class="font-dim">|</span>
+			<span class="text-cyan font-bold">Esc</span>
+			<span class="font-dim">cancels</span>
+		</div>
 	} else if a.delTarget.Get() != "" {
 		<div class="flex gap-1 shrink-0 px-1">
 			<span class="text-red font-bold">{fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())}</span>
