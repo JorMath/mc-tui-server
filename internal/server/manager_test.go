@@ -331,6 +331,58 @@ func TestJavaCommandWithMemoryAndArgs(t *testing.T) {
 	}
 }
 
+func TestSetInstanceWhileStopped(t *testing.T) {
+	m := newTestManager(t, "obedient")
+	inst := m.Instance()
+	inst.Name = "renombrado"
+	inst.Dir = `C:\servers\renombrado`
+	if err := m.SetInstance(inst); err != nil {
+		t.Fatalf("SetInstance detenido: %v", err)
+	}
+	if got := m.Instance().Name; got != "renombrado" {
+		t.Fatalf("Instance().Name = %q, quiero %q", got, "renombrado")
+	}
+}
+
+func TestSetInstanceWhileRunningFails(t *testing.T) {
+	m := newTestManager(t, "obedient")
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	inst := m.Instance()
+	inst.Name = "renombrado"
+	if err := m.SetInstance(inst); err == nil {
+		t.Fatal("SetInstance con el servidor corriendo debe fallar")
+	}
+	if got := m.Instance().Name; got != "test" {
+		t.Fatalf("Instance().Name = %q, no debe cambiar tras el fallo", got)
+	}
+}
+
+func TestCloseEndsLogChannel(t *testing.T) {
+	m := newTestManager(t, "obedient")
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close detenido: %v", err)
+	}
+	if _, open := <-m.Logs(); open {
+		t.Fatal("el canal de logs debe estar cerrado tras Close")
+	}
+	// Idempotente: un segundo Close no debe hacer panic.
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close repetido: %v", err)
+	}
+}
+
+func TestCloseWhileRunningFails(t *testing.T) {
+	m := newTestManager(t, "obedient")
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if err := m.Close(); err == nil {
+		t.Fatal("Close con el servidor corriendo debe fallar")
+	}
+}
+
 func TestLogChannelDoesNotBlockWhenFull(t *testing.T) {
 	m := newTestManager(t, "obedient")
 	if err := m.Start(); err != nil {

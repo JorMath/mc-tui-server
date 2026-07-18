@@ -119,6 +119,71 @@ func TestRemove(t *testing.T) {
 	}
 }
 
+func TestRenamePreservesPositionAndData(t *testing.T) {
+	s := testStore(t)
+	for _, n := range []string{"uno", "dos", "tres"} {
+		if err := s.Add(sample(n)); err != nil {
+			t.Fatalf("Add(%s): %v", n, err)
+		}
+	}
+	if err := s.Rename("dos", "renombrado"); err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	list := s.Instances()
+	if list[1].Name != "renombrado" {
+		t.Fatalf("Instances()[1].Name = %q, quiero \"renombrado\" (posición preservada)", list[1].Name)
+	}
+	got, ok := s.Get("renombrado")
+	if !ok {
+		t.Fatal("Get(renombrado) no encontrado tras Rename")
+	}
+	if got.MemoryMB != 2048 || got.Type != Paper {
+		t.Fatalf("Rename alteró otros campos: %+v", got)
+	}
+	if _, ok := s.Get("dos"); ok {
+		t.Fatal("el nombre viejo sigue presente tras Rename")
+	}
+}
+
+func TestRenameRejectsEmptyName(t *testing.T) {
+	s := testStore(t)
+	if err := s.Add(sample("uno")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := s.Rename("uno", ""); err == nil {
+		t.Fatal("Rename a nombre vacío debe fallar")
+	}
+}
+
+func TestRenameRejectsDuplicateName(t *testing.T) {
+	s := testStore(t)
+	for _, n := range []string{"uno", "dos"} {
+		if err := s.Add(sample(n)); err != nil {
+			t.Fatalf("Add(%s): %v", n, err)
+		}
+	}
+	if err := s.Rename("uno", "dos"); err == nil {
+		t.Fatal("Rename a nombre existente debe fallar")
+	}
+}
+
+func TestRenameSameNameIsNoop(t *testing.T) {
+	s := testStore(t)
+	if err := s.Add(sample("uno")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := s.Rename("uno", "uno"); err != nil {
+		t.Fatalf("Rename al mismo nombre debe ser válido: %v", err)
+	}
+}
+
+func TestRenameMissingFails(t *testing.T) {
+	s := testStore(t)
+	if err := s.Rename("fantasma", "nuevo"); err == nil {
+		t.Fatal("Rename de instancia inexistente debe fallar")
+	}
+}
+
 func TestSaveCreatesParentDirs(t *testing.T) {
 	dir := t.TempDir()
 	s := NewStore(filepath.Join(dir, "anidado", "mas", "instances.json"))

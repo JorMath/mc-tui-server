@@ -99,6 +99,13 @@ type app struct {
 	cmdActive *tui.State[bool]
 	cmdText   *tui.State[string]
 
+	// Gestión de instancias (v0.1.1): renombrar y eliminar con confirmación.
+	// delTarget guarda el nombre pendiente de confirmar ("" = sin diálogo).
+	renActive *tui.State[bool]
+	renText   *tui.State[string]
+	renMsg    *tui.State[string]
+	delTarget *tui.State[string]
+
 	collector *metrics.Collector
 	samples   *tui.State[map[string]metrics.Sample]
 	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
@@ -209,6 +216,10 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		logs:      tui.NewState(logs),
 		cmdActive: tui.NewState(false),
 		cmdText:   tui.NewState(""),
+		renActive: tui.NewState(false),
+		renText:   tui.NewState(""),
+		renMsg:    tui.NewState(""),
+		delTarget: tui.NewState(""),
 		collector: metrics.NewCollector(),
 		samples:   tui.NewState(map[string]metrics.Sample{}),
 		lastPIDs:  map[string]int{},
@@ -254,10 +265,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 }
 
 func (a *app) pumpLogs(m *server.Manager) {
-	name := m.Instance().Name
 	go func() {
 		for line := range m.Logs() {
-			a.logCh <- logEntry{name: name, line: line}
+			a.logCh <- logEntry{name: m.Instance().Name, line: line}
 		}
 	}()
 }
@@ -418,6 +428,158 @@ func (a *app) submitCmd(ke tui.KeyEvent) {
 func (a *app) closeCmd(ke tui.KeyEvent) {
 	a.cmdActive.Set(false)
 	a.cmdText.Set("")
+}
+
+func (a *app) renOpen() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	if mgr.Status() != server.Stopped {
+		a.appendLog(mgr.Instance().Name, "[mc-tui] Stop the server before renaming")
+		return
+	}
+	a.renText.Set(mgr.Instance().Name)
+	a.renMsg.Set("")
+	a.renActive.Set(true)
+}
+
+func (a *app) renClose() {
+	a.renActive.Set(false)
+	a.renText.Set("")
+	a.renMsg.Set("")
+}
+
+func (a *app) renCommit() {
+	mgr := a.current()
+	if mgr == nil {
+		a.renClose()
+		return
+	}
+	old := mgr.Instance().Name
+	name := a.renText.Get()
+	if name == old {
+		a.renClose()
+		return
+	}
+	if name == "" {
+		a.renMsg.Set("The name cannot be empty")
+		return
+	}
+	if _, exists := a.store.Get(name); exists {
+		a.renMsg.Set(fmt.Sprintf("An instance named %q already exists", name))
+		return
+	}
+	if mgr.Status() != server.Stopped {
+		a.renMsg.Set("Stop the server before renaming")
+		return
+	}
+	inst := mgr.Instance()
+	if filepath.Base(inst.Dir) == old {
+		newDir := filepath.Join(filepath.Dir(inst.Dir), name)
+		if err := os.Rename(inst.Dir, newDir); err != nil {
+			a.renMsg.Set("Error: " + err.Error())
+			return
+		}
+		inst.Dir = newDir
+	}
+	inst.Name = name
+	if err := a.store.Rename(old, name); err != nil {
+		a.renMsg.Set("Error: " + err.Error())
+		return
+	}
+	if err := a.store.Update(inst); err != nil {
+		a.renMsg.Set("Error: " + err.Error())
+		return
+	}
+	if err := a.store.Save(); err != nil {
+		a.renMsg.Set("Error: " + err.Error())
+		return
+	}
+	// El manager está detenido (chequeado arriba): SetInstance no falla.
+	_ = mgr.SetInstance(inst)
+	a.logs.Update(func(m map[string][]string) map[string][]string {
+		m[name] = m[old]
+		delete(m, old)
+		return m
+	})
+	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
+		m[name] = server.Stopped
+		delete(m, old)
+		return m
+	})
+	a.appendLog(name, fmt.Sprintf("[mc-tui] Renamed %q to %q", old, name))
+	a.renClose()
+}
+
+func (a *app) delAsk() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	if mgr.Status() != server.Stopped {
+		a.appendLog(mgr.Instance().Name, "[mc-tui] Stop the server before deleting the instance")
+		return
+	}
+	a.delTarget.Set(mgr.Instance().Name)
+}
+
+func (a *app) delDo() {
+	name := a.delTarget.Get()
+	a.delTarget.Set("")
+	mgr := a.current()
+	if mgr == nil || name == "" || mgr.Instance().Name != name {
+		return
+	}
+	if mgr.Status() != server.Stopped {
+		a.appendLog(name, "[mc-tui] Stop the server before deleting the instance")
+		return
+	}
+	inst := mgr.Instance()
+	// La carpeta se borra solo si no apunta al propio directorio de datos
+	// (un instances.json editado a mano podría hacerlo).
+	if inst.Dir != "" && filepath.Clean(inst.Dir) != filepath.Clean(a.dataDir) {
+		if err := os.RemoveAll(inst.Dir); err != nil {
+			a.appendLog(name, "[mc-tui] Error: "+err.Error())
+			return
+		}
+	}
+	if err := a.store.Remove(name); err != nil {
+		a.appendLog(name, "[mc-tui] Error: "+err.Error())
+		return
+	}
+	if err := a.store.Save(); err != nil {
+		a.appendLog(name, "[mc-tui] Error: "+err.Error())
+		return
+	}
+	// Detenido (chequeado arriba): Close no falla y termina el pump de logs.
+	_ = mgr.Close()
+	a.managers.Update(func(ms []*server.Manager) []*server.Manager {
+		for i, m := range ms {
+			if m == mgr {
+				return append(ms[:i], ms[i+1:]...)
+			}
+		}
+		return ms
+	})
+	a.selected.Update(func(i int) int {
+		n := len(a.managers.Get())
+		if n == 0 {
+			return 0
+		}
+		if i >= n {
+			return n - 1
+		}
+		return i
+	})
+	a.logs.Update(func(m map[string][]string) map[string][]string {
+		delete(m, name)
+		return m
+	})
+	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
+		delete(m, name)
+		return m
+	})
 }
 
 func (a *app) wizOpen() {
@@ -905,7 +1067,7 @@ func (a *app) mainHints() []hint {
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
-		{"n", "new"}, {"q", "quit"},
+		{"n", "new"}, {"R", "rename"}, {"d", "delete"}, {"q", "quit"},
 	}
 }
 
@@ -1215,6 +1377,32 @@ func (a *app) KeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyEscape, a.closeCmd),
 		}
 	}
+	if a.renActive.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				if validNameChar(ke.Rune) {
+					a.renText.Update(func(s string) string { return s + string(ke.Rune) })
+				}
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.renText.Update(func(s string) string {
+					if len(s) == 0 {
+						return s
+					}
+					return s[:len(s)-1]
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.renCommit() }),
+			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.renClose() }),
+		}
+	}
+	if a.delTarget.Get() != "" {
+		return tui.KeyMap{
+			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.delDo() }),
+			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.delTarget.Set("") }),
+			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.delTarget.Set("") }),
+		}
+	}
 	return tui.KeyMap{
 		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
 		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
@@ -1222,6 +1410,8 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
 		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
+		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
+		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -1971,8 +2161,100 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			)
 			__tui_100.AddChild(__tui_108)
 			__tui_13.AddChild(__tui_100)
-		} else {
+		} else if a.renActive.Get() {
 			__tui_109 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+				tui.WithFlexShrink(0),
+				tui.WithPaddingTRBL(0, 1, 0, 1),
+			)
+			__tui_110 := tui.New(
+				tui.WithText(fmt.Sprintf("Rename %s to:", a.currentName())),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_109.AddChild(__tui_110)
+			__tui_111 := tui.New(
+				tui.WithText(a.renText.Get()),
+			)
+			__tui_109.AddChild(__tui_111)
+			__tui_112 := tui.New(
+				tui.WithText("_"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+			)
+			__tui_109.AddChild(__tui_112)
+			if a.renMsg.Get() != "" {
+				__tui_113 := tui.New(
+					tui.WithText(a.renMsg.Get()),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+				)
+				__tui_109.AddChild(__tui_113)
+			}
+			__tui_114 := tui.New(
+				tui.WithText("Enter"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_109.AddChild(__tui_114)
+			__tui_115 := tui.New(
+				tui.WithText("applies"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_109.AddChild(__tui_115)
+			__tui_116 := tui.New(
+				tui.WithText("|"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_109.AddChild(__tui_116)
+			__tui_117 := tui.New(
+				tui.WithText("Esc"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_109.AddChild(__tui_117)
+			__tui_118 := tui.New(
+				tui.WithText("cancels"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_109.AddChild(__tui_118)
+			__tui_13.AddChild(__tui_109)
+		} else if a.delTarget.Get() != "" {
+			__tui_119 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+				tui.WithFlexShrink(0),
+				tui.WithPaddingTRBL(0, 1, 0, 1),
+			)
+			__tui_120 := tui.New(
+				tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			)
+			__tui_119.AddChild(__tui_120)
+			__tui_121 := tui.New(
+				tui.WithText("y"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			)
+			__tui_119.AddChild(__tui_121)
+			__tui_122 := tui.New(
+				tui.WithText("delete"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_119.AddChild(__tui_122)
+			__tui_123 := tui.New(
+				tui.WithText("|"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_119.AddChild(__tui_123)
+			__tui_124 := tui.New(
+				tui.WithText("n/Esc"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			)
+			__tui_119.AddChild(__tui_124)
+			__tui_125 := tui.New(
+				tui.WithText("keep"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_119.AddChild(__tui_125)
+			__tui_13.AddChild(__tui_119)
+		} else {
+			__tui_126 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 				tui.WithGap(1),
 				tui.WithFlexShrink(0),
@@ -1980,24 +2262,24 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			for i, h := range a.mainHints() {
 				_ = i
 				if i > 0 {
-					__tui_110 := tui.New(
+					__tui_127 := tui.New(
 						tui.WithText("|"),
 						tui.WithTextStyle(tui.NewStyle().Dim()),
 					)
-					__tui_109.AddChild(__tui_110)
+					__tui_126.AddChild(__tui_127)
 				}
-				__tui_111 := tui.New(
+				__tui_128 := tui.New(
 					tui.WithText(h.K),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 				)
-				__tui_109.AddChild(__tui_111)
-				__tui_112 := tui.New(
+				__tui_126.AddChild(__tui_128)
+				__tui_129 := tui.New(
 					tui.WithText(h.L),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_109.AddChild(__tui_112)
+				__tui_126.AddChild(__tui_129)
 			}
-			__tui_13.AddChild(__tui_109)
+			__tui_13.AddChild(__tui_126)
 		}
 		if __tui_0 == nil {
 			__tui_0 = __tui_13
@@ -2054,6 +2336,18 @@ func (a *app) bindAppFields(app *tui.App) {
 	}
 	if a.cmdText != nil {
 		a.cmdText.BindApp(app)
+	}
+	if a.renActive != nil {
+		a.renActive.BindApp(app)
+	}
+	if a.renText != nil {
+		a.renText.BindApp(app)
+	}
+	if a.renMsg != nil {
+		a.renMsg.BindApp(app)
+	}
+	if a.delTarget != nil {
+		a.delTarget.BindApp(app)
 	}
 	if a.samples != nil {
 		a.samples.BindApp(app)

@@ -21,7 +21,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **Modrinth** — search plugins/mods filtered by your instance's loader and
   game version, and install them with one key.
 - **Multi-instance** — manage as many local servers as you want; configs
-  are stored as JSON in your user config directory.
+  are stored as JSON in your user config directory. Rename or delete
+  instances (with confirmation) right from the sidebar.
 
 ## Requirements
 
@@ -97,6 +98,8 @@ mc-tui-server -version   # print the version and exit
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install |
 | `n` | new instance wizard (type → version → name → memory → EULA) |
+| `R` | rename the selected instance (server must be stopped) |
+| `d` | delete the selected instance and all its files, after confirmation |
 | `q` | quit (running servers are stopped gracefully) |
 
 Every screen shows its active keys in the footer, highlighted in cyan.

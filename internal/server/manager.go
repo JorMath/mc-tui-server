@@ -72,6 +72,7 @@ type Manager struct {
 	cmd    *exec.Cmd
 	stdin  io.WriteCloser
 	exited chan struct{}
+	closed bool
 }
 
 // New crea un Manager detenido para la instancia dada.
@@ -89,7 +90,40 @@ func New(inst config.Instance, opts ...Option) *Manager {
 }
 
 // Instance devuelve la configuración de la instancia gestionada.
-func (m *Manager) Instance() config.Instance { return m.inst }
+func (m *Manager) Instance() config.Instance {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.inst
+}
+
+// SetInstance reemplaza la configuración de la instancia (p.ej. tras un
+// rename). Solo se permite con el servidor detenido para no desincronizar
+// el proceso en marcha.
+func (m *Manager) SetInstance(inst config.Instance) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != Stopped {
+		return fmt.Errorf("server %q is %s; stop it first", m.inst.Name, m.status)
+	}
+	m.inst = inst
+	return nil
+}
+
+// Close cierra el canal de logs para que los consumidores terminen. Solo
+// se permite con el servidor detenido (sin lectores escribiendo). Es
+// idempotente; un Manager cerrado no debe reutilizarse.
+func (m *Manager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status != Stopped {
+		return fmt.Errorf("server %q is %s; stop it first", m.inst.Name, m.status)
+	}
+	if !m.closed {
+		m.closed = true
+		close(m.logs)
+	}
+	return nil
+}
 
 // Logs devuelve el canal por el que llegan las líneas de stdout/stderr.
 func (m *Manager) Logs() <-chan string { return m.logs }

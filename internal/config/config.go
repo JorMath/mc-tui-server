@@ -128,6 +128,26 @@ func (s *Store) Update(inst Instance) error {
 	return fmt.Errorf("no instance named %q", inst.Name)
 }
 
+// Rename cambia el nombre de una instancia preservando su posición en la
+// lista. Falla con nombre nuevo vacío, duplicado o instancia inexistente.
+func (s *Store) Rename(oldName, newName string) error {
+	if newName == "" {
+		return errors.New("the instance needs a name")
+	}
+	if newName != oldName {
+		if _, exists := s.Get(newName); exists {
+			return fmt.Errorf("an instance named %q already exists", newName)
+		}
+	}
+	for i := range s.instances {
+		if s.instances[i].Name == oldName {
+			s.instances[i].Name = newName
+			return nil
+		}
+	}
+	return fmt.Errorf("no instance named %q", oldName)
+}
+
 // Remove elimina la instancia por nombre. Falla si no existe.
 func (s *Store) Remove(name string) error {
 	for i := range s.instances {
