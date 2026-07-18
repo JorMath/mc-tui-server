@@ -37,22 +37,44 @@ const (
 
 var wizTypes = []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric}
 
-// Arte ASCII del splash: título MC-TUI / SERVER y cara de creeper.
-var splashTitle = []string{
-	"███╗   ███╗ ██████╗        ████████╗██╗   ██╗██╗",
-	"████╗ ████║██╔════╝        ╚══██╔══╝██║   ██║██║",
-	"██╔████╔██║██║      █████╗    ██║   ██║   ██║██║",
-	"██║╚██╔╝██║██║      ╚════╝    ██║   ██║   ██║██║",
-	"██║ ╚═╝ ██║╚██████╗           ██║   ╚██████╔╝██║",
-	"╚═╝     ╚═╝ ╚═════╝           ╚═╝    ╚═════╝ ╚═╝",
-	"",
-	"███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ ",
-	"██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗",
-	"███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝",
-	"╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗",
-	"███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║",
-	"╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝",
+// Arte ASCII del splash: solo bloques sólidos y espacios — los caracteres
+// de caja (╔═╗) se superponen en algunas fuentes de terminal.
+// splashFont: 5 filas por letra, ancho fijo por letra.
+var splashFont = map[rune][]string{
+	'M': {"█   █", "██ ██", "█ █ █", "█   █", "█   █"},
+	'C': {" ███", "█   ", "█   ", "█   ", " ███"},
+	'-': {"    ", "    ", " ██ ", "    ", "    "},
+	'T': {"█████", "  █  ", "  █  ", "  █  ", "  █  "},
+	'U': {"█   █", "█   █", "█   █", "█   █", " ███ "},
+	'I': {"███", " █ ", " █ ", " █ ", "███"},
+	'S': {" ████", "█    ", " ███ ", "    █", "████ "},
+	'E': {"█████", "█    ", "███  ", "█    ", "█████"},
+	'R': {"████ ", "█   █", "████ ", "█  █ ", "█   █"},
+	'V': {"█   █", "█   █", "█   █", " █ █ ", "  █  "},
 }
+
+// renderWord compone una palabra duplicando cada celda en horizontal
+// (píxeles de 2 columnas, como los del creeper).
+func renderWord(word string) []string {
+	rows := make([]string, 5)
+	for r := 0; r < 5; r++ {
+		for i, ch := range word {
+			if i > 0 {
+				rows[r] += "  "
+			}
+			for _, c := range splashFont[ch][r] {
+				if c == '█' {
+					rows[r] += "██"
+				} else {
+					rows[r] += "  "
+				}
+			}
+		}
+	}
+	return rows
+}
+
+var splashTitle = append(append(renderWord("MC-TUI"), ""), renderWord("SERVER")...)
 
 var splashCreeper = []string{
 	"  ████    ████  ",
@@ -1013,15 +1035,17 @@ func (a *app) wizStepTitle() string {
 
 templ (a *app) Render() {
 	if a.splash.Get() {
-		<div class="flex-col h-full items-center justify-center">
-			for _, line := range splashCreeper {
-				<span class="text-green font-bold">{line}</span>
-			}
-			<span class="shrink-0">{" "}</span>
-			for _, line := range splashTitle {
-				<span class="text-green">{line}</span>
-			}
-			<span class="shrink-0">{" "}</span>
+		<div class="flex-col h-full items-center justify-center gap-1">
+			<div class="flex-col">
+				for _, line := range splashCreeper {
+					<span class="text-green font-bold">{line}</span>
+				}
+			</div>
+			<div class="flex-col">
+				for _, line := range splashTitle {
+					<span class="text-green">{line}</span>
+				}
+			</div>
 			<span class="font-dim">Press any key to start</span>
 		</div>
 	} else {

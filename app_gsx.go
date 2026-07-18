@@ -40,21 +40,20 @@ const (
 
 var wizTypes = []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric}
 
-var splashTitle = []string{
-	"███╗   ███╗ ██████╗        ████████╗██╗   ██╗██╗",
-	"████╗ ████║██╔════╝        ╚══██╔══╝██║   ██║██║",
-	"██╔████╔██║██║      █████╗    ██║   ██║   ██║██║",
-	"██║╚██╔╝██║██║      ╚════╝    ██║   ██║   ██║██║",
-	"██║ ╚═╝ ██║╚██████╗           ██║   ╚██████╔╝██║",
-	"╚═╝     ╚═╝ ╚═════╝           ╚═╝    ╚═════╝ ╚═╝",
-	"",
-	"███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ ",
-	"██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗",
-	"███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝",
-	"╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗",
-	"███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║",
-	"╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝",
+var splashFont = map[rune][]string{
+	'M': {"█   █", "██ ██", "█ █ █", "█   █", "█   █"},
+	'C': {" ███", "█   ", "█   ", "█   ", " ███"},
+	'-': {"    ", "    ", " ██ ", "    ", "    "},
+	'T': {"█████", "  █  ", "  █  ", "  █  ", "  █  "},
+	'U': {"█   █", "█   █", "█   █", "█   █", " ███ "},
+	'I': {"███", " █ ", " █ ", " █ ", "███"},
+	'S': {" ████", "█    ", " ███ ", "    █", "████ "},
+	'E': {"█████", "█    ", "███  ", "█    ", "█████"},
+	'R': {"████ ", "█   █", "████ ", "█  █ ", "█   █"},
+	'V': {"█   █", "█   █", "█   █", " █ █ ", "  █  "},
 }
+
+var splashTitle = append(append(renderWord("MC-TUI"), ""), renderWord("SERVER")...)
 
 var splashCreeper = []string{
 	"  ████    ████  ",
@@ -126,6 +125,25 @@ type app struct {
 type wizItem struct {
 	Text string
 	Sel  bool
+}
+
+func renderWord(word string) []string {
+	rows := make([]string, 5)
+	for r := 0; r < 5; r++ {
+		for i, ch := range word {
+			if i > 0 {
+				rows[r] += "  "
+			}
+			for _, c := range splashFont[ch][r] {
+				if c == '█' {
+					rows[r] += "██"
+				} else {
+					rows[r] += "  "
+				}
+			}
+		}
+	}
+	return rows
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -1009,33 +1027,32 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			tui.WithHeightPercent(100.00),
 			tui.WithAlign(tui.AlignCenter),
 			tui.WithJustify(tui.JustifyCenter),
+			tui.WithGap(1),
+		)
+		__tui_2 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		)
 		for __idx_0, line := range splashCreeper {
 			_ = __idx_0
-			__tui_2 := tui.New(
+			__tui_3 := tui.New(
 				tui.WithText(line),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
 			)
-			__tui_1.AddChild(__tui_2)
+			__tui_2.AddChild(__tui_3)
 		}
-		__tui_3 := tui.New(
-			tui.WithText(" "),
-			tui.WithFlexShrink(0),
+		__tui_1.AddChild(__tui_2)
+		__tui_4 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		)
-		__tui_1.AddChild(__tui_3)
 		for __idx_0, line := range splashTitle {
 			_ = __idx_0
-			__tui_4 := tui.New(
+			__tui_5 := tui.New(
 				tui.WithText(line),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
 			)
-			__tui_1.AddChild(__tui_4)
+			__tui_4.AddChild(__tui_5)
 		}
-		__tui_5 := tui.New(
-			tui.WithText(" "),
-			tui.WithFlexShrink(0),
-		)
-		__tui_1.AddChild(__tui_5)
+		__tui_1.AddChild(__tui_4)
 		__tui_6 := tui.New(
 			tui.WithText("Press any key to start"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
