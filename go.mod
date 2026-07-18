@@ -1,4 +1,4 @@
-module mc-tui-server
+module github.com/JorMath/mc-tui-server
 
 go 1.26.5
 

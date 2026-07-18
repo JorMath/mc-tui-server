@@ -7,8 +7,8 @@ import (
 
 	tui "github.com/grindlemire/go-tui"
 
-	"mc-tui-server/internal/config"
-	"mc-tui-server/internal/server"
+	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/server"
 )
 
 // version se inyecta en el build con -ldflags "-X main.version=v1.2.3".

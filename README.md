@@ -34,7 +34,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 
 ### Prebuilt binaries
 
-Grab the binary for your platform from `dist/` (or a release), put it
+Grab the binary for your platform from the
+[Releases page](https://github.com/JorMath/mc-tui-server/releases), put it
 somewhere on your PATH and run it:
 
 ```
@@ -43,12 +44,25 @@ mc-tui-server_linux_amd64         # Linux x86-64
 mc-tui-server_linux_arm64         # Linux ARM64
 ```
 
+### With Go
+
+```bash
+go install github.com/JorMath/mc-tui-server@latest
+```
+
 ### From source
 
 ```bash
-go install github.com/grindlemire/go-tui/cmd/tui@latest   # gsx compiler
-tui generate ./...
+git clone https://github.com/JorMath/mc-tui-server
+cd mc-tui-server
 go build -o mc-tui-server .
+```
+
+If you edit `app.gsx` you need the gsx compiler to regenerate the Go code:
+
+```bash
+go install github.com/grindlemire/go-tui/cmd/tui@latest
+tui generate ./...
 ```
 
 ### Cross-compile release binaries

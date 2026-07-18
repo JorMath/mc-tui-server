@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 func ctx() context.Context { return context.Background() }

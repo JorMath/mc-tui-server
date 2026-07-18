@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 // makeWorld crea un directorio de mundo válido (con level.dat).

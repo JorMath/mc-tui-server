@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 func TestForKnownTypes(t *testing.T) {

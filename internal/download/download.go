@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 // Provider expone las versiones disponibles de una distribución y resuelve

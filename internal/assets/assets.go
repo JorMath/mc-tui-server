@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 // validName rechaza nombres vacíos o con separadores de ruta para que

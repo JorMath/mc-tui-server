@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 // TestHelperProcess no es un test real: es el proceso hijo que simula un

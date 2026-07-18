@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/config"
 )
 
 // Status es el estado del proceso del servidor.

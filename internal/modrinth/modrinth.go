@@ -9,8 +9,8 @@ import (
 	"net/http"
 	"net/url"
 
-	"mc-tui-server/internal/config"
-	"mc-tui-server/internal/download"
+	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/download"
 )
 
 const defaultBase = "https://api.modrinth.com"
