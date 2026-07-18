@@ -150,6 +150,11 @@ type wizItem struct {
 	Sel  bool
 }
 
+type hint struct {
+	K string
+	L string
+}
+
 func renderWord(word string) []string {
 	rows := make([]string, 5)
 	for r := 0; r < 5; r++ {
@@ -896,11 +901,53 @@ func (a *app) fmTitle() string {
 	return title
 }
 
-func (a *app) fmHelp() string {
-	if a.fmTab.Get() == 0 {
-		return "↑/↓ select | Enter edit | w save | 1/2/3 or Tab switch | Esc close"
+func (a *app) mainHints() []hint {
+	return []hint{
+		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
+		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
+		{"n", "new"}, {"q", "quit"},
 	}
-	return "↑/↓ select | d delete | 1/2/3 or Tab switch | Esc close"
+}
+
+func (a *app) wizHints() []hint {
+	switch a.wizStep.Get() {
+	case wizType:
+		return []hint{{"↑/↓", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizLoading:
+		return []hint{{"Esc", "cancel"}}
+	case wizVersion:
+		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizName:
+		return []hint{{"a-z 0-9 - _", "type"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizMem:
+		return []hint{{"0-9", "type (empty = 2048)"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizEula:
+		return []hint{{"y", "accept & download"}, {"n/Esc", "cancel"}}
+	case wizError:
+		return []hint{{"Esc", "close"}}
+	default: // wizDownload: no hay teclas activas
+		return nil
+	}
+}
+
+func (a *app) fmHints() []hint {
+	if a.fmEditing.Get() {
+		return []hint{{"Enter", "apply"}, {"Esc", "cancel"}}
+	}
+	if a.fmConfirm.Get() != "" {
+		return []hint{{"y", "delete"}, {"n/Esc", "keep"}}
+	}
+	if a.fmTab.Get() == 0 {
+		return []hint{{"↑/↓", "select"}, {"Enter", "edit"}, {"w", "save"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
+	}
+	return []hint{{"↑/↓", "select"}, {"d", "delete"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
+}
+
+func (a *app) mrHints() []hint {
+	if a.mrTyping.Get() {
+		return []hint{{"Enter", "search"}, {"Esc", "close"}}
+	}
+	return []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}, {"Esc", "close"}}
 }
 
 func (a *app) fmTabName() string {
@@ -1192,24 +1239,6 @@ func (a *app) Watchers() []tui.Watcher {
 	}
 }
 
-func (a *app) rowClass(i int) string {
-	if i == a.selected.Get() {
-		return "font-bold text-cyan"
-	}
-	return ""
-}
-
-func (a *app) statusClass(name string) string {
-	switch a.statuses.Get()[name] {
-	case server.Running:
-		return "text-green"
-	case server.Stopping:
-		return "text-yellow"
-	default:
-		return "font-dim"
-	}
-}
-
 func (a *app) statusText(name string) string {
 	st := a.statuses.Get()[name]
 	if st == "" {
@@ -1398,75 +1427,88 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 				tui.WithJustify(tui.JustifySpaceBetween),
 			)
-			__tui_24 := tui.New(
-				tui.WithText(mgr.Instance().Name),
-			)
-			__tui_23.AddChild(__tui_24)
-			__tui_25 := tui.New(
-				tui.WithText(a.statusText(mgr.Instance().Name)),
-			)
-			__tui_23.AddChild(__tui_25)
+			if i == a.selected.Get() {
+				__tui_24 := tui.New(
+					tui.WithText(fmt.Sprintf("> %s", mgr.Instance().Name)),
+					tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
+				)
+				__tui_23.AddChild(__tui_24)
+			} else {
+				__tui_25 := tui.New(
+					tui.WithText(fmt.Sprintf("  %s", mgr.Instance().Name)),
+				)
+				__tui_23.AddChild(__tui_25)
+			}
+			if a.statusText(mgr.Instance().Name) == string(server.Running) {
+				__tui_26 := tui.New(
+					tui.WithText(a.statusText(mgr.Instance().Name)),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
+				)
+				__tui_23.AddChild(__tui_26)
+			} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
+				__tui_27 := tui.New(
+					tui.WithText(a.statusText(mgr.Instance().Name)),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
+				)
+				__tui_23.AddChild(__tui_27)
+			} else {
+				__tui_28 := tui.New(
+					tui.WithText(a.statusText(mgr.Instance().Name)),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_23.AddChild(__tui_28)
+			}
 			__tui_22.AddChild(__tui_23)
 			if a.metricText(mgr.Instance().Name) != "" {
-				__tui_26 := tui.New(
+				__tui_29 := tui.New(
 					tui.WithText(a.metricText(mgr.Instance().Name)),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_22.AddChild(__tui_26)
+				__tui_22.AddChild(__tui_29)
 			}
 			__tui_18.AddChild(__tui_22)
 		}
 		__tui_17.AddChild(__tui_18)
 		if a.wizStep.Get() != wizOff {
-			__tui_27 := tui.New(
+			__tui_30 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithBorder(tui.BorderRounded),
 				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Cyan)),
 				tui.WithPadding(1),
 				tui.WithFlexGrow(1),
 			)
-			__tui_28 := tui.New(
+			__tui_31 := tui.New(
 				tui.WithText(fmt.Sprintf("New instance — %s", a.wizStepTitle())),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_27.AddChild(__tui_28)
+			__tui_30.AddChild(__tui_31)
 			if a.wizStep.Get() == wizType {
 				for __idx_0, item := range a.wizTypeItems() {
 					_ = __idx_0
 					if item.Sel {
-						__tui_29 := tui.New(
+						__tui_32 := tui.New(
 							tui.WithText(fmt.Sprintf("> %s", item.Text)),
 							tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 						)
-						__tui_27.AddChild(__tui_29)
+						__tui_30.AddChild(__tui_32)
 					} else {
-						__tui_30 := tui.New(
+						__tui_33 := tui.New(
 							tui.WithText(fmt.Sprintf("  %s", item.Text)),
 						)
-						__tui_27.AddChild(__tui_30)
+						__tui_30.AddChild(__tui_33)
 					}
 				}
-				__tui_31 := tui.New(
-					tui.WithText("↑/↓ choose | Enter continue | Esc cancel"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_27.AddChild(__tui_31)
 			}
 			if a.wizStep.Get() == wizLoading {
-				__tui_32 := tui.New(
+				__tui_34 := tui.New(
 					tui.WithText(a.wizMsg.Get()),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 				)
-				__tui_27.AddChild(__tui_32)
-				__tui_33 := tui.New(
-					tui.WithText("Esc cancel"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_27.AddChild(__tui_33)
+				__tui_30.AddChild(__tui_34)
 			}
 			if a.wizStep.Get() == wizVersion {
-				__tui_34 := tui.New(
+				__tui_35 := tui.New(
 					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 					tui.WithFlexGrow(1),
 					tui.WithScrollable(tui.ScrollVertical),
@@ -1475,25 +1517,19 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				for __idx_0, item := range a.wizVersionItems() {
 					_ = __idx_0
 					if item.Sel {
-						__tui_35 := tui.New(
+						__tui_36 := tui.New(
 							tui.WithText(fmt.Sprintf("> %s", item.Text)),
 							tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 						)
-						__tui_34.AddChild(__tui_35)
+						__tui_35.AddChild(__tui_36)
 					} else {
-						__tui_36 := tui.New(
+						__tui_37 := tui.New(
 							tui.WithText(fmt.Sprintf("  %s", item.Text)),
 						)
-						__tui_34.AddChild(__tui_36)
+						__tui_35.AddChild(__tui_37)
 					}
 				}
-				__tui_27.AddChild(__tui_34)
-				__tui_37 := tui.New(
-					tui.WithText("↑/↓/PgUp/PgDn choose | Enter continue | Esc cancel"),
-					tui.WithFlexShrink(0),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_27.AddChild(__tui_37)
+				__tui_30.AddChild(__tui_35)
 			}
 			if a.wizStep.Get() == wizName {
 				__tui_38 := tui.New(
@@ -1514,110 +1550,175 @@ func (a *app) Render(app *tui.App) *tui.Element {
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 				)
 				__tui_38.AddChild(__tui_41)
-				__tui_27.AddChild(__tui_38)
+				__tui_30.AddChild(__tui_38)
 				if a.wizMsg.Get() != "" {
 					__tui_42 := tui.New(
 						tui.WithText(a.wizMsg.Get()),
 						tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 					)
-					__tui_27.AddChild(__tui_42)
+					__tui_30.AddChild(__tui_42)
 				}
-				__tui_43 := tui.New(
-					tui.WithText("letters, digits, - and _ | Enter continue | Esc cancel"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_27.AddChild(__tui_43)
 			}
 			if a.wizStep.Get() == wizMem {
-				__tui_44 := tui.New(
+				__tui_43 := tui.New(
 					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 					tui.WithGap(1),
 				)
-				__tui_45 := tui.New(
+				__tui_44 := tui.New(
 					tui.WithText("Memory (MB):"),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 				)
-				__tui_44.AddChild(__tui_45)
-				__tui_46 := tui.New(
+				__tui_43.AddChild(__tui_44)
+				__tui_45 := tui.New(
 					tui.WithText(a.wizMemory.Get()),
 				)
-				__tui_44.AddChild(__tui_46)
-				__tui_47 := tui.New(
+				__tui_43.AddChild(__tui_45)
+				__tui_46 := tui.New(
 					tui.WithText("_"),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 				)
-				__tui_44.AddChild(__tui_47)
-				__tui_27.AddChild(__tui_44)
-				__tui_48 := tui.New(
-					tui.WithText("empty = 2048 | Enter continue | Esc cancel"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_27.AddChild(__tui_48)
+				__tui_43.AddChild(__tui_46)
+				__tui_30.AddChild(__tui_43)
 			}
 			if a.wizStep.Get() == wizEula {
-				__tui_49 := tui.New(
+				__tui_47 := tui.New(
 					tui.WithText("To run the server you must accept the Minecraft EULA:"),
 				)
-				__tui_27.AddChild(__tui_49)
-				__tui_50 := tui.New(
+				__tui_30.AddChild(__tui_47)
+				__tui_48 := tui.New(
 					tui.WithText("https://aka.ms/MinecraftEULA"),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
 				)
-				__tui_27.AddChild(__tui_50)
-				__tui_51 := tui.New(
-					tui.WithText("Accept? (y = yes, download | n/Esc = cancel)"),
+				__tui_30.AddChild(__tui_48)
+				__tui_49 := tui.New(
+					tui.WithText("Do you accept?"),
 					tui.WithTextStyle(tui.NewStyle().Bold()),
 				)
-				__tui_27.AddChild(__tui_51)
+				__tui_30.AddChild(__tui_49)
 			}
 			if a.wizStep.Get() == wizDownload {
-				__tui_52 := tui.New(
+				__tui_50 := tui.New(
 					tui.WithText(a.wizMsg.Get()),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 				)
-				__tui_27.AddChild(__tui_52)
+				__tui_30.AddChild(__tui_50)
 			}
 			if a.wizStep.Get() == wizError {
-				__tui_53 := tui.New(
+				__tui_51 := tui.New(
 					tui.WithText(a.wizMsg.Get()),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 				)
-				__tui_27.AddChild(__tui_53)
+				__tui_30.AddChild(__tui_51)
+			}
+			__tui_52 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+				tui.WithFlexShrink(0),
+			)
+			for i, h := range a.wizHints() {
+				_ = i
+				if i > 0 {
+					__tui_53 := tui.New(
+						tui.WithText("|"),
+						tui.WithTextStyle(tui.NewStyle().Dim()),
+					)
+					__tui_52.AddChild(__tui_53)
+				}
 				__tui_54 := tui.New(
-					tui.WithText("Esc close"),
+					tui.WithText(h.K),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+				)
+				__tui_52.AddChild(__tui_54)
+				__tui_55 := tui.New(
+					tui.WithText(h.L),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_27.AddChild(__tui_54)
+				__tui_52.AddChild(__tui_55)
 			}
-			__tui_17.AddChild(__tui_27)
+			__tui_30.AddChild(__tui_52)
+			__tui_17.AddChild(__tui_30)
 		} else if a.fmOpen.Get() {
-			__tui_55 := tui.New(
+			__tui_56 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithBorder(tui.BorderRounded),
 				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Cyan)),
 				tui.WithPadding(1),
 				tui.WithFlexGrow(1),
 			)
-			__tui_56 := tui.New(
+			__tui_57 := tui.New(
 				tui.WithText(a.fmTitle()),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_55.AddChild(__tui_56)
-			__tui_57 := tui.New(
-				tui.WithText("1 Properties | 2 Worlds | 3 Plugins/Mods"),
+			__tui_56.AddChild(__tui_57)
+			__tui_58 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
 				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_55.AddChild(__tui_57)
+			__tui_59 := tui.New(
+				tui.WithText("1"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_58.AddChild(__tui_59)
+			if a.fmTab.Get() == 0 {
+				__tui_60 := tui.New(
+					tui.WithText("Properties"),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+				)
+				__tui_58.AddChild(__tui_60)
+			} else {
+				__tui_61 := tui.New(
+					tui.WithText("Properties"),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_58.AddChild(__tui_61)
+			}
+			__tui_62 := tui.New(
+				tui.WithText("2"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_58.AddChild(__tui_62)
+			if a.fmTab.Get() == 1 {
+				__tui_63 := tui.New(
+					tui.WithText("Worlds"),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+				)
+				__tui_58.AddChild(__tui_63)
+			} else {
+				__tui_64 := tui.New(
+					tui.WithText("Worlds"),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_58.AddChild(__tui_64)
+			}
+			__tui_65 := tui.New(
+				tui.WithText("3"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_58.AddChild(__tui_65)
+			if a.fmTab.Get() == 2 {
+				__tui_66 := tui.New(
+					tui.WithText("Plugins/Mods"),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+				)
+				__tui_58.AddChild(__tui_66)
+			} else {
+				__tui_67 := tui.New(
+					tui.WithText("Plugins/Mods"),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_58.AddChild(__tui_67)
+			}
+			__tui_56.AddChild(__tui_58)
 			if len(a.fmItems()) == 0 {
-				__tui_58 := tui.New(
+				__tui_68 := tui.New(
 					tui.WithText("(empty)"),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_55.AddChild(__tui_58)
+				__tui_56.AddChild(__tui_68)
 			}
-			__tui_59 := tui.New(
+			__tui_69 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithFlexGrow(1),
 				tui.WithScrollable(tui.ScrollVertical),
@@ -1626,103 +1727,123 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			for __idx_0, item := range a.fmItems() {
 				_ = __idx_0
 				if item.Sel {
-					__tui_60 := tui.New(
+					__tui_70 := tui.New(
 						tui.WithText(fmt.Sprintf("> %s", item.Text)),
 						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 					)
-					__tui_59.AddChild(__tui_60)
+					__tui_69.AddChild(__tui_70)
 				} else {
-					__tui_61 := tui.New(
+					__tui_71 := tui.New(
 						tui.WithText(fmt.Sprintf("  %s", item.Text)),
 					)
-					__tui_59.AddChild(__tui_61)
+					__tui_69.AddChild(__tui_71)
 				}
 			}
-			__tui_55.AddChild(__tui_59)
+			__tui_56.AddChild(__tui_69)
 			if a.fmEditing.Get() {
-				__tui_62 := tui.New(
+				__tui_72 := tui.New(
 					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 					tui.WithGap(1),
 				)
-				__tui_63 := tui.New(
+				__tui_73 := tui.New(
 					tui.WithText(fmt.Sprintf("%s =", a.fmSelectedKey())),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 				)
-				__tui_62.AddChild(__tui_63)
-				__tui_64 := tui.New(
+				__tui_72.AddChild(__tui_73)
+				__tui_74 := tui.New(
 					tui.WithText(a.fmEditText.Get()),
 				)
-				__tui_62.AddChild(__tui_64)
-				__tui_65 := tui.New(
+				__tui_72.AddChild(__tui_74)
+				__tui_75 := tui.New(
 					tui.WithText("_"),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 				)
-				__tui_62.AddChild(__tui_65)
-				__tui_66 := tui.New(
+				__tui_72.AddChild(__tui_75)
+				__tui_76 := tui.New(
 					tui.WithText("(Enter applies | Esc cancels)"),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_62.AddChild(__tui_66)
-				__tui_55.AddChild(__tui_62)
+				__tui_72.AddChild(__tui_76)
+				__tui_56.AddChild(__tui_72)
 			}
 			if a.fmConfirm.Get() != "" {
-				__tui_67 := tui.New(
+				__tui_77 := tui.New(
 					tui.WithText(fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
 				)
-				__tui_55.AddChild(__tui_67)
+				__tui_56.AddChild(__tui_77)
 			}
 			if a.fmMsg.Get() != "" {
-				__tui_68 := tui.New(
+				__tui_78 := tui.New(
 					tui.WithText(a.fmMsg.Get()),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 				)
-				__tui_55.AddChild(__tui_68)
+				__tui_56.AddChild(__tui_78)
 			}
-			__tui_69 := tui.New(
-				tui.WithText(a.fmHelp()),
+			__tui_79 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
 				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_55.AddChild(__tui_69)
-			__tui_17.AddChild(__tui_55)
+			for i, h := range a.fmHints() {
+				_ = i
+				if i > 0 {
+					__tui_80 := tui.New(
+						tui.WithText("|"),
+						tui.WithTextStyle(tui.NewStyle().Dim()),
+					)
+					__tui_79.AddChild(__tui_80)
+				}
+				__tui_81 := tui.New(
+					tui.WithText(h.K),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+				)
+				__tui_79.AddChild(__tui_81)
+				__tui_82 := tui.New(
+					tui.WithText(h.L),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_79.AddChild(__tui_82)
+			}
+			__tui_56.AddChild(__tui_79)
+			__tui_17.AddChild(__tui_56)
 		} else if a.mrOpen.Get() {
-			__tui_70 := tui.New(
+			__tui_83 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithBorder(tui.BorderRounded),
 				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Green)),
 				tui.WithPadding(1),
 				tui.WithFlexGrow(1),
 			)
-			__tui_71 := tui.New(
+			__tui_84 := tui.New(
 				tui.WithText(fmt.Sprintf("Modrinth — %s", a.currentName())),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
 			)
-			__tui_70.AddChild(__tui_71)
-			__tui_72 := tui.New(
+			__tui_83.AddChild(__tui_84)
+			__tui_85 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 				tui.WithGap(1),
 				tui.WithFlexShrink(0),
 			)
-			__tui_73 := tui.New(
+			__tui_86 := tui.New(
 				tui.WithText("Search:"),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
 			)
-			__tui_72.AddChild(__tui_73)
-			__tui_74 := tui.New(
+			__tui_85.AddChild(__tui_86)
+			__tui_87 := tui.New(
 				tui.WithText(a.mrQuery.Get()),
 			)
-			__tui_72.AddChild(__tui_74)
+			__tui_85.AddChild(__tui_87)
 			if a.mrTyping.Get() {
-				__tui_75 := tui.New(
+				__tui_88 := tui.New(
 					tui.WithText("_"),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Blink()),
 				)
-				__tui_72.AddChild(__tui_75)
+				__tui_85.AddChild(__tui_88)
 			}
-			__tui_70.AddChild(__tui_72)
-			__tui_76 := tui.New(
+			__tui_83.AddChild(__tui_85)
+			__tui_89 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithFlexGrow(1),
 				tui.WithScrollable(tui.ScrollVertical),
@@ -1731,44 +1852,55 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			for __idx_0, item := range a.mrItems() {
 				_ = __idx_0
 				if item.Sel {
-					__tui_77 := tui.New(
+					__tui_90 := tui.New(
 						tui.WithText(fmt.Sprintf("> %s", item.Text)),
 						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
 					)
-					__tui_76.AddChild(__tui_77)
+					__tui_89.AddChild(__tui_90)
 				} else {
-					__tui_78 := tui.New(
+					__tui_91 := tui.New(
 						tui.WithText(fmt.Sprintf("  %s", item.Text)),
 					)
-					__tui_76.AddChild(__tui_78)
+					__tui_89.AddChild(__tui_91)
 				}
 			}
-			__tui_70.AddChild(__tui_76)
+			__tui_83.AddChild(__tui_89)
 			if a.mrMsg.Get() != "" {
-				__tui_79 := tui.New(
+				__tui_92 := tui.New(
 					tui.WithText(a.mrMsg.Get()),
 					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 				)
-				__tui_70.AddChild(__tui_79)
+				__tui_83.AddChild(__tui_92)
 			}
-			if a.mrTyping.Get() {
-				__tui_80 := tui.New(
-					tui.WithText("your search | Enter search | Esc close"),
-					tui.WithFlexShrink(0),
+			__tui_93 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+				tui.WithFlexShrink(0),
+			)
+			for i, h := range a.mrHints() {
+				_ = i
+				if i > 0 {
+					__tui_94 := tui.New(
+						tui.WithText("|"),
+						tui.WithTextStyle(tui.NewStyle().Dim()),
+					)
+					__tui_93.AddChild(__tui_94)
+				}
+				__tui_95 := tui.New(
+					tui.WithText(h.K),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
+				)
+				__tui_93.AddChild(__tui_95)
+				__tui_96 := tui.New(
+					tui.WithText(h.L),
 					tui.WithTextStyle(tui.NewStyle().Dim()),
 				)
-				__tui_70.AddChild(__tui_80)
-			} else {
-				__tui_81 := tui.New(
-					tui.WithText("↑/↓ select | Enter install | / new search | Esc close"),
-					tui.WithFlexShrink(0),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_70.AddChild(__tui_81)
+				__tui_93.AddChild(__tui_96)
 			}
-			__tui_17.AddChild(__tui_70)
+			__tui_83.AddChild(__tui_93)
+			__tui_17.AddChild(__tui_83)
 		} else {
-			__tui_82 := tui.New(
+			__tui_97 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithBorder(tui.BorderRounded),
 				tui.WithPadding(1),
@@ -1776,56 +1908,96 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				tui.WithScrollable(tui.ScrollVertical),
 				tui.WithScrollOffset(0, math.MaxInt),
 			)
-			__tui_83 := tui.New(
+			__tui_98 := tui.New(
 				tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Bold()),
 			)
-			__tui_82.AddChild(__tui_83)
+			__tui_97.AddChild(__tui_98)
 			for __idx_0, line := range a.currentLogs() {
 				_ = __idx_0
-				__tui_84 := tui.New(
+				__tui_99 := tui.New(
 					tui.WithText(line),
 				)
-				__tui_82.AddChild(__tui_84)
+				__tui_97.AddChild(__tui_99)
 			}
-			__tui_17.AddChild(__tui_82)
+			__tui_17.AddChild(__tui_97)
 		}
 		__tui_13.AddChild(__tui_17)
 		if a.cmdActive.Get() {
-			__tui_85 := tui.New(
+			__tui_100 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 				tui.WithGap(1),
 				tui.WithFlexShrink(0),
 				tui.WithPaddingTRBL(0, 1, 0, 1),
 			)
-			__tui_86 := tui.New(
+			__tui_101 := tui.New(
 				tui.WithText(fmt.Sprintf("%s >", a.currentName())),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 			)
-			__tui_85.AddChild(__tui_86)
-			__tui_87 := tui.New(
+			__tui_100.AddChild(__tui_101)
+			__tui_102 := tui.New(
 				tui.WithText(a.cmdText.Get()),
 			)
-			__tui_85.AddChild(__tui_87)
-			__tui_88 := tui.New(
+			__tui_100.AddChild(__tui_102)
+			__tui_103 := tui.New(
 				tui.WithText("_"),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 			)
-			__tui_85.AddChild(__tui_88)
-			__tui_89 := tui.New(
-				tui.WithText("(Enter sends | Esc closes)"),
+			__tui_100.AddChild(__tui_103)
+			__tui_104 := tui.New(
+				tui.WithText("Enter"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_100.AddChild(__tui_104)
+			__tui_105 := tui.New(
+				tui.WithText("sends"),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_85.AddChild(__tui_89)
-			__tui_13.AddChild(__tui_85)
+			__tui_100.AddChild(__tui_105)
+			__tui_106 := tui.New(
+				tui.WithText("|"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_100.AddChild(__tui_106)
+			__tui_107 := tui.New(
+				tui.WithText("Esc"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_100.AddChild(__tui_107)
+			__tui_108 := tui.New(
+				tui.WithText("closes"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_100.AddChild(__tui_108)
+			__tui_13.AddChild(__tui_100)
 		} else {
-			__tui_90 := tui.New(
-				tui.WithText("↑/↓ select | s start | x stop | r restart | c/Enter command | e files | m modrinth | n new | q quit"),
+			__tui_109 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
 				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_13.AddChild(__tui_90)
+			for i, h := range a.mainHints() {
+				_ = i
+				if i > 0 {
+					__tui_110 := tui.New(
+						tui.WithText("|"),
+						tui.WithTextStyle(tui.NewStyle().Dim()),
+					)
+					__tui_109.AddChild(__tui_110)
+				}
+				__tui_111 := tui.New(
+					tui.WithText(h.K),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+				)
+				__tui_109.AddChild(__tui_111)
+				__tui_112 := tui.New(
+					tui.WithText(h.L),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_109.AddChild(__tui_112)
+			}
+			__tui_13.AddChild(__tui_109)
 		}
 		if __tui_0 == nil {
 			__tui_0 = __tui_13

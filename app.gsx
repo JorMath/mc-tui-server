@@ -922,11 +922,59 @@ func (a *app) fmTitle() string {
 	return title
 }
 
-func (a *app) fmHelp() string {
-	if a.fmTab.Get() == 0 {
-		return "↑/↓ select | Enter edit | w save | 1/2/3 or Tab switch | Esc close"
+// hint es un atajo de teclado mostrado al pie: tecla en cyan + etiqueta.
+type hint struct {
+	K string
+	L string
+}
+
+func (a *app) mainHints() []hint {
+	return []hint{
+		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
+		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
+		{"n", "new"}, {"q", "quit"},
 	}
-	return "↑/↓ select | d delete | 1/2/3 or Tab switch | Esc close"
+}
+
+func (a *app) wizHints() []hint {
+	switch a.wizStep.Get() {
+	case wizType:
+		return []hint{{"↑/↓", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizLoading:
+		return []hint{{"Esc", "cancel"}}
+	case wizVersion:
+		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizName:
+		return []hint{{"a-z 0-9 - _", "type"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizMem:
+		return []hint{{"0-9", "type (empty = 2048)"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizEula:
+		return []hint{{"y", "accept & download"}, {"n/Esc", "cancel"}}
+	case wizError:
+		return []hint{{"Esc", "close"}}
+	default: // wizDownload: no hay teclas activas
+		return nil
+	}
+}
+
+func (a *app) fmHints() []hint {
+	if a.fmEditing.Get() {
+		return []hint{{"Enter", "apply"}, {"Esc", "cancel"}}
+	}
+	if a.fmConfirm.Get() != "" {
+		return []hint{{"y", "delete"}, {"n/Esc", "keep"}}
+	}
+	if a.fmTab.Get() == 0 {
+		return []hint{{"↑/↓", "select"}, {"Enter", "edit"}, {"w", "save"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
+	}
+	return []hint{{"↑/↓", "select"}, {"d", "delete"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
+}
+
+func (a *app) mrHints() []hint {
+	if a.mrTyping.Get() {
+		return []hint{{"Enter", "search"}, {"Esc", "close"}}
+	}
+	return []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}, {"Esc", "close"}}
 }
 
 func (a *app) fmTabName() string {
@@ -1220,24 +1268,6 @@ func (a *app) Watchers() []tui.Watcher {
 	}
 }
 
-func (a *app) rowClass(i int) string {
-	if i == a.selected.Get() {
-		return "font-bold text-cyan"
-	}
-	return ""
-}
-
-func (a *app) statusClass(name string) string {
-	switch a.statuses.Get()[name] {
-	case server.Running:
-		return "text-green"
-	case server.Stopping:
-		return "text-yellow"
-	default:
-		return "font-dim"
-	}
-}
-
 func (a *app) statusText(name string) string {
 	st := a.statuses.Get()[name]
 	if st == "" {
@@ -1330,8 +1360,18 @@ templ (a *app) Render() {
 					for i, mgr := range a.managers.Get() {
 						<div class="flex-col">
 							<div class="flex justify-between">
-								<span class={a.rowClass(i)}>{mgr.Instance().Name}</span>
-								<span class={a.statusClass(mgr.Instance().Name)}>{a.statusText(mgr.Instance().Name)}</span>
+								if i == a.selected.Get() {
+									<span class="font-bold text-cyan">{fmt.Sprintf("> %s", mgr.Instance().Name)}</span>
+								} else {
+									<span>{fmt.Sprintf("  %s", mgr.Instance().Name)}</span>
+								}
+								if a.statusText(mgr.Instance().Name) == string(server.Running) {
+									<span class="text-green">{a.statusText(mgr.Instance().Name)}</span>
+								} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
+									<span class="text-yellow">{a.statusText(mgr.Instance().Name)}</span>
+								} else {
+									<span class="font-dim">{a.statusText(mgr.Instance().Name)}</span>
+								}
 							</div>
 							if a.metricText(mgr.Instance().Name) != "" {
 								<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
@@ -1350,11 +1390,9 @@ templ (a *app) Render() {
 									<span>{fmt.Sprintf("  %s", item.Text)}</span>
 								}
 							}
-							<span class="font-dim">↑/↓ choose | Enter continue | Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizLoading {
 							<span class="text-yellow">{a.wizMsg.Get()}</span>
-							<span class="font-dim">Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizVersion {
 							<div
@@ -1370,7 +1408,6 @@ templ (a *app) Render() {
 									}
 								}
 							</div>
-							<span class="font-dim shrink-0">↑/↓/PgUp/PgDn choose | Enter continue | Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizName {
 							<div class="flex gap-1">
@@ -1381,7 +1418,6 @@ templ (a *app) Render() {
 							if a.wizMsg.Get() != "" {
 								<span class="text-red">{a.wizMsg.Get()}</span>
 							}
-							<span class="font-dim">letters, digits, - and _ | Enter continue | Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizMem {
 							<div class="flex gap-1">
@@ -1389,25 +1425,51 @@ templ (a *app) Render() {
 								<span>{a.wizMemory.Get()}</span>
 								<span class="text-cyan blink">_</span>
 							</div>
-							<span class="font-dim">empty = 2048 | Enter continue | Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizEula {
 							<span>To run the server you must accept the Minecraft EULA:</span>
 							<span class="text-cyan">{"https://aka.ms/MinecraftEULA"}</span>
-							<span class="font-bold">Accept? (y = yes, download | n/Esc = cancel)</span>
+							<span class="font-bold">Do you accept?</span>
 						}
 						if a.wizStep.Get() == wizDownload {
 							<span class="text-yellow">{a.wizMsg.Get()}</span>
 						}
 						if a.wizStep.Get() == wizError {
 							<span class="text-red">{a.wizMsg.Get()}</span>
-							<span class="font-dim">Esc close</span>
 						}
+						<div class="flex gap-1 shrink-0">
+							for i, h := range a.wizHints() {
+								if i > 0 {
+									<span class="font-dim">|</span>
+								}
+								<span class="text-cyan font-bold">{h.K}</span>
+								<span class="font-dim">{h.L}</span>
+							}
+						</div>
 					</div>
 				} else if a.fmOpen.Get() {
 					<div class="flex-col border-rounded border-cyan p-1 flex-grow">
 						<span class="font-bold text-cyan shrink-0">{a.fmTitle()}</span>
-						<span class="font-dim shrink-0">1 Properties | 2 Worlds | 3 Plugins/Mods</span>
+						<div class="flex gap-1 shrink-0">
+							<span class="text-cyan font-bold">1</span>
+							if a.fmTab.Get() == 0 {
+								<span class="text-cyan">Properties</span>
+							} else {
+								<span class="font-dim">Properties</span>
+							}
+							<span class="text-cyan font-bold">2</span>
+							if a.fmTab.Get() == 1 {
+								<span class="text-cyan">Worlds</span>
+							} else {
+								<span class="font-dim">Worlds</span>
+							}
+							<span class="text-cyan font-bold">3</span>
+							if a.fmTab.Get() == 2 {
+								<span class="text-cyan">Plugins/Mods</span>
+							} else {
+								<span class="font-dim">Plugins/Mods</span>
+							}
+						</div>
 						if len(a.fmItems()) == 0 {
 							<span class="font-dim">(empty)</span>
 						}
@@ -1438,7 +1500,15 @@ templ (a *app) Render() {
 						if a.fmMsg.Get() != "" {
 							<span class="text-yellow">{a.fmMsg.Get()}</span>
 						}
-						<span class="font-dim shrink-0">{a.fmHelp()}</span>
+						<div class="flex gap-1 shrink-0">
+							for i, h := range a.fmHints() {
+								if i > 0 {
+									<span class="font-dim">|</span>
+								}
+								<span class="text-cyan font-bold">{h.K}</span>
+								<span class="font-dim">{h.L}</span>
+							}
+						</div>
 					</div>
 				} else if a.mrOpen.Get() {
 					<div class="flex-col border-rounded border-green p-1 flex-grow">
@@ -1466,11 +1536,15 @@ templ (a *app) Render() {
 						if a.mrMsg.Get() != "" {
 							<span class="text-yellow">{a.mrMsg.Get()}</span>
 						}
-						if a.mrTyping.Get() {
-							<span class="font-dim shrink-0">your search | Enter search | Esc close</span>
-						} else {
-							<span class="font-dim shrink-0">↑/↓ select | Enter install | / new search | Esc close</span>
-						}
+						<div class="flex gap-1 shrink-0">
+							for i, h := range a.mrHints() {
+								if i > 0 {
+									<span class="font-dim">|</span>
+								}
+								<span class="text-green font-bold">{h.K}</span>
+								<span class="font-dim">{h.L}</span>
+							}
+						</div>
 					</div>
 				} else {
 					<div
@@ -1490,10 +1564,22 @@ templ (a *app) Render() {
 					<span class="text-cyan font-bold">{fmt.Sprintf("%s >", a.currentName())}</span>
 					<span>{a.cmdText.Get()}</span>
 					<span class="text-cyan blink">_</span>
-					<span class="font-dim">(Enter sends | Esc closes)</span>
+					<span class="text-cyan font-bold">Enter</span>
+					<span class="font-dim">sends</span>
+					<span class="font-dim">|</span>
+					<span class="text-cyan font-bold">Esc</span>
+					<span class="font-dim">closes</span>
 				</div>
 			} else {
-				<span class="font-dim shrink-0">↑/↓ select | s start | x stop | r restart | c/Enter command | e files | m modrinth | n new | q quit</span>
+				<div class="flex gap-1 shrink-0">
+					for i, h := range a.mainHints() {
+						if i > 0 {
+							<span class="font-dim">|</span>
+						}
+						<span class="text-cyan font-bold">{h.K}</span>
+						<span class="font-dim">{h.L}</span>
+					}
+				</div>
 			}
 		</div>
 	}
