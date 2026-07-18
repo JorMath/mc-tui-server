@@ -58,9 +58,21 @@ type hint struct {
 	L string
 }
 
+// newState crea un State y lo registra en reg para BindApp. La struct app
+// vive fuera de app.gsx, así que el generador ya no emite la vinculación
+// de estados: sin BindApp, Set() no marca dirty y la UI queda congelada
+// (el splash nunca se descartaba en v0.1.1).
+func newState[T any](reg *[]tui.AppBinder, v T) *tui.State[T] {
+	s := tui.NewState(v)
+	*reg = append(*reg, s)
+	return s
+}
+
 type app struct {
-	store    *config.Store
-	dataDir  string
+	store   *config.Store
+	dataDir string
+	// binders acumula todos los State para vincularlos en BindApp.
+	binders  []tui.AppBinder
 	managers *tui.State[[]*server.Manager]
 	// splash se muestra al arrancar hasta pulsar una tecla o agotar los
 	// ticks del timer de refresh. splashTicks solo lo toca ese timer.
@@ -137,64 +149,77 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		statuses[m.Instance().Name] = m.Status()
 		logs[m.Instance().Name] = nil
 	}
+	var reg []tui.AppBinder
 	a := &app{
 		store:     store,
 		dataDir:   filepath.Dir(store.Path()),
-		managers:  tui.NewState(managers),
-		splash:    tui.NewState(true),
+		managers:  newState(&reg, managers),
+		splash:    newState(&reg, true),
 		logCh:     make(chan logEntry, 2048),
-		selected:  tui.NewState(0),
-		statuses:  tui.NewState(statuses),
-		logs:      tui.NewState(logs),
-		cmdActive: tui.NewState(false),
-		cmdText:   tui.NewState(""),
-		renActive: tui.NewState(false),
-		renText:   tui.NewState(""),
-		renMsg:    tui.NewState(""),
-		delTarget: tui.NewState(""),
+		selected:  newState(&reg, 0),
+		statuses:  newState(&reg, statuses),
+		logs:      newState(&reg, logs),
+		cmdActive: newState(&reg, false),
+		cmdText:   newState(&reg, ""),
+		renActive: newState(&reg, false),
+		renText:   newState(&reg, ""),
+		renMsg:    newState(&reg, ""),
+		delTarget: newState(&reg, ""),
 		collector: metrics.NewCollector(),
-		samples:   tui.NewState(map[string]metrics.Sample{}),
+		samples:   newState(&reg, map[string]metrics.Sample{}),
 		lastPIDs:  map[string]int{},
 
-		wizStep:     tui.NewState(wizOff),
-		wizGen:      tui.NewState(0),
-		wizTypeIdx:  tui.NewState(0),
-		wizVersions: tui.NewState([]string{}),
-		wizVerIdx:   tui.NewState(0),
-		wizName:     tui.NewState(""),
-		wizMemory:   tui.NewState(""),
-		wizMsg:      tui.NewState(""),
+		wizStep:     newState(&reg, wizOff),
+		wizGen:      newState(&reg, 0),
+		wizTypeIdx:  newState(&reg, 0),
+		wizVersions: newState(&reg, []string{}),
+		wizVerIdx:   newState(&reg, 0),
+		wizName:     newState(&reg, ""),
+		wizMemory:   newState(&reg, ""),
+		wizMsg:      newState(&reg, ""),
 
-		fmOpen:      tui.NewState(false),
-		fmTab:       tui.NewState(0),
+		fmOpen:      newState(&reg, false),
+		fmTab:       newState(&reg, 0),
 		fmProps:     &properties.File{},
-		fmRev:       tui.NewState(0),
-		fmPropsIdx:  tui.NewState(0),
-		fmEditing:   tui.NewState(false),
-		fmEditText:  tui.NewState(""),
-		fmDirty:     tui.NewState(false),
-		fmWorlds:    tui.NewState([]string{}),
-		fmPlugins:   tui.NewState([]string{}),
-		fmWorldIdx:  tui.NewState(0),
-		fmPluginIdx: tui.NewState(0),
-		fmConfirm:   tui.NewState(""),
-		fmMsg:       tui.NewState(""),
+		fmRev:       newState(&reg, 0),
+		fmPropsIdx:  newState(&reg, 0),
+		fmEditing:   newState(&reg, false),
+		fmEditText:  newState(&reg, ""),
+		fmDirty:     newState(&reg, false),
+		fmWorlds:    newState(&reg, []string{}),
+		fmPlugins:   newState(&reg, []string{}),
+		fmWorldIdx:  newState(&reg, 0),
+		fmPluginIdx: newState(&reg, 0),
+		fmConfirm:   newState(&reg, ""),
+		fmMsg:       newState(&reg, ""),
 
 		mr:        &modrinth.Client{},
-		mrOpen:    tui.NewState(false),
-		mrTyping:  tui.NewState(false),
-		mrQuery:   tui.NewState(""),
-		mrResults: tui.NewState([]modrinth.Project{}),
-		mrIdx:     tui.NewState(0),
-		mrBusy:    tui.NewState(false),
-		mrGen:     tui.NewState(0),
-		mrMsg:     tui.NewState(""),
+		mrOpen:    newState(&reg, false),
+		mrTyping:  newState(&reg, false),
+		mrQuery:   newState(&reg, ""),
+		mrResults: newState(&reg, []modrinth.Project{}),
+		mrIdx:     newState(&reg, 0),
+		mrBusy:    newState(&reg, false),
+		mrGen:     newState(&reg, 0),
+		mrMsg:     newState(&reg, ""),
 	}
+	a.binders = reg
 	for _, m := range managers {
 		a.pumpLogs(m)
 	}
 	return a
 }
+
+// BindApp vincula todos los State a la tui.App para que Set() marque dirty
+// y dispare el re-render. Lo llama SetRootComponent al arrancar; el
+// generador lo emitía cuando la struct app vivía dentro de app.gsx.
+func (a *app) BindApp(app *tui.App) {
+	for _, b := range a.binders {
+		b.BindApp(app)
+	}
+}
+
+var _ tui.AppBinder = (*app)(nil)
 
 // pumpLogs reenvía los logs de un manager al canal agregado de la app.
 // El nombre se lee por línea para que un rename no deje logs huérfanos;
