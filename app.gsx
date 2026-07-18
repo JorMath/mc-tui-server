@@ -592,9 +592,10 @@ func (a *app) wizTypeItems() []wizItem {
 	return items
 }
 
-// wizVersionItems devuelve una ventana de versiones alrededor de la selección.
+// wizVersionItems devuelve la lista completa; el contenedor scrollable
+// del render se encarga de recortar y seguir la selección.
 func (a *app) wizVersionItems() []wizItem {
-	return windowItems(a.wizVersions.Get(), a.wizVerIdx.Get(), 12)
+	return fullItems(a.wizVersions.Get(), a.wizVerIdx.Get())
 }
 
 func (a *app) wizMoveType(delta int) {
@@ -749,34 +750,46 @@ func (a *app) fmPropLines() []string {
 	return out
 }
 
-// windowItems devuelve una ventana de elementos alrededor de la selección.
-func windowItems(list []string, sel, window int) []wizItem {
-	start := sel - window/2
-	if start < 0 {
-		start = 0
-	}
-	end := start + window
-	if end > len(list) {
-		end = len(list)
-		if start = end - window; start < 0 {
-			start = 0
-		}
-	}
-	items := make([]wizItem, 0, end-start)
-	for i := start; i < end; i++ {
-		items = append(items, wizItem{Text: list[i], Sel: i == sel})
+// fullItems marca la selección sobre la lista completa; el recorte lo
+// hace el contenedor scrollable del render.
+func fullItems(list []string, sel int) []wizItem {
+	items := make([]wizItem, len(list))
+	for i, s := range list {
+		items[i] = wizItem{Text: s, Sel: i == sel}
 	}
 	return items
+}
+
+// scrollTo calcula el desplazamiento vertical para mantener visible la
+// selección, dejando unas líneas de contexto por encima.
+func scrollTo(sel int) int {
+	y := sel - 4
+	if y < 0 {
+		return 0
+	}
+	return y
 }
 
 func (a *app) fmItems() []wizItem {
 	switch a.fmTab.Get() {
 	case 0:
-		return windowItems(a.fmPropLines(), a.fmPropsIdx.Get(), 16)
+		return fullItems(a.fmPropLines(), a.fmPropsIdx.Get())
 	case 1:
-		return windowItems(a.fmWorlds.Get(), a.fmWorldIdx.Get(), 16)
+		return fullItems(a.fmWorlds.Get(), a.fmWorldIdx.Get())
 	default:
-		return windowItems(a.fmPlugins.Get(), a.fmPluginIdx.Get(), 16)
+		return fullItems(a.fmPlugins.Get(), a.fmPluginIdx.Get())
+	}
+}
+
+// fmScrollY sigue la selección de la pestaña activa.
+func (a *app) fmScrollY() int {
+	switch a.fmTab.Get() {
+	case 0:
+		return scrollTo(a.fmPropsIdx.Get())
+	case 1:
+		return scrollTo(a.fmWorldIdx.Get())
+	default:
+		return scrollTo(a.fmPluginIdx.Get())
 	}
 }
 
@@ -1106,7 +1119,7 @@ func (a *app) mrItems() []wizItem {
 		}
 		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
 	}
-	return windowItems(lines, a.mrIdx.Get(), 14)
+	return fullItems(lines, a.mrIdx.Get())
 }
 
 func (a *app) mrMove(delta int) {
@@ -1327,7 +1340,7 @@ templ (a *app) Render() {
 					}
 				</div>
 				if a.wizStep.Get() != wizOff {
-					<div class="flex-col border-rounded border-cyan p-1 flex-grow gap-1">
+					<div class="flex-col border-rounded border-cyan p-1 flex-grow">
 						<span class="font-bold text-cyan shrink-0">{fmt.Sprintf("New instance — %s", a.wizStepTitle())}</span>
 						if a.wizStep.Get() == wizType {
 							for _, item := range a.wizTypeItems() {
@@ -1344,14 +1357,20 @@ templ (a *app) Render() {
 							<span class="font-dim">Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizVersion {
-							for _, item := range a.wizVersionItems() {
-								if item.Sel {
-									<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
-								} else {
-									<span>{fmt.Sprintf("  %s", item.Text)}</span>
+							<div
+								class="flex-col flex-grow"
+								scrollable={tui.ScrollVertical}
+								scrollOffset={0, scrollTo(a.wizVerIdx.Get())}
+							>
+								for _, item := range a.wizVersionItems() {
+									if item.Sel {
+										<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+									} else {
+										<span>{fmt.Sprintf("  %s", item.Text)}</span>
+									}
 								}
-							}
-							<span class="font-dim">↑/↓/PgUp/PgDn choose | Enter continue | Esc cancel</span>
+							</div>
+							<span class="font-dim shrink-0">↑/↓/PgUp/PgDn choose | Enter continue | Esc cancel</span>
 						}
 						if a.wizStep.Get() == wizName {
 							<div class="flex gap-1">
@@ -1392,13 +1411,19 @@ templ (a *app) Render() {
 						if len(a.fmItems()) == 0 {
 							<span class="font-dim">(empty)</span>
 						}
-						for _, item := range a.fmItems() {
-							if item.Sel {
-								<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
-							} else {
-								<span>{fmt.Sprintf("  %s", item.Text)}</span>
+						<div
+							class="flex-col flex-grow"
+							scrollable={tui.ScrollVertical}
+							scrollOffset={0, a.fmScrollY()}
+						>
+							for _, item := range a.fmItems() {
+								if item.Sel {
+									<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+								} else {
+									<span>{fmt.Sprintf("  %s", item.Text)}</span>
+								}
 							}
-						}
+						</div>
 						if a.fmEditing.Get() {
 							<div class="flex gap-1">
 								<span class="text-cyan font-bold">{fmt.Sprintf("%s =", a.fmSelectedKey())}</span>
@@ -1425,13 +1450,19 @@ templ (a *app) Render() {
 								<span class="text-green blink">_</span>
 							}
 						</div>
-						for _, item := range a.mrItems() {
-							if item.Sel {
-								<span class="font-bold text-green">{fmt.Sprintf("> %s", item.Text)}</span>
-							} else {
-								<span>{fmt.Sprintf("  %s", item.Text)}</span>
+						<div
+							class="flex-col flex-grow"
+							scrollable={tui.ScrollVertical}
+							scrollOffset={0, scrollTo(a.mrIdx.Get())}
+						>
+							for _, item := range a.mrItems() {
+								if item.Sel {
+									<span class="font-bold text-green">{fmt.Sprintf("> %s", item.Text)}</span>
+								} else {
+									<span>{fmt.Sprintf("  %s", item.Text)}</span>
+								}
 							}
-						}
+						</div>
 						if a.mrMsg.Get() != "" {
 							<span class="text-yellow">{a.mrMsg.Get()}</span>
 						}
