@@ -162,7 +162,7 @@ func TestDownloadFileTruncatedBodyFails(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", "1000")
 		w.Write([]byte("corto"))
-		w.(http.Flusher).Flush() // asegura que los headers salgan antes del corte
+		w.(http.Flusher).Flush()    // asegura que los headers salgan antes del corte
 		panic(http.ErrAbortHandler) // corta la conexión a mitad del cuerpo
 	}))
 	defer srv.Close()

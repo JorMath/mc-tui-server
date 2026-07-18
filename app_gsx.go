@@ -4,2451 +4,622 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"math"
-	"os"
-	"path/filepath"
-	"strconv"
-	"time"
 
-	"github.com/JorMath/mc-tui-server/internal/assets"
-	"github.com/JorMath/mc-tui-server/internal/config"
-	"github.com/JorMath/mc-tui-server/internal/download"
-	"github.com/JorMath/mc-tui-server/internal/metrics"
-	"github.com/JorMath/mc-tui-server/internal/modrinth"
-	"github.com/JorMath/mc-tui-server/internal/properties"
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
 )
 
-const (
-	stopTimeout = 30 * time.Second
-	maxLogLines = 5000
-)
-
-const (
-	wizOff = iota
-	wizType
-	wizLoading
-	wizVersion
-	wizName
-	wizMem
-	wizEula
-	wizDownload
-	wizError
-)
-
-var wizTypes = []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric}
-
-var splashFont = map[rune][]string{
-	'M': {"█   █", "██ ██", "█ █ █", "█   █", "█   █"},
-	'C': {" ███", "█   ", "█   ", "█   ", " ███"},
-	'-': {"    ", "    ", " ██ ", "    ", "    "},
-	'T': {"█████", "  █  ", "  █  ", "  █  ", "  █  "},
-	'U': {"█   █", "█   █", "█   █", "█   █", " ███ "},
-	'I': {"███", " █ ", " █ ", " █ ", "███"},
-	'S': {" ████", "█    ", " ███ ", "    █", "████ "},
-	'E': {"█████", "█    ", "███  ", "█    ", "█████"},
-	'R': {"████ ", "█   █", "████ ", "█  █ ", "█   █"},
-	'V': {"█   █", "█   █", "█   █", " █ █ ", "  █  "},
-}
-
-const blank = "⠀"
-
-var splashTitle = append(append(renderWord("MC-TUI"), blank), renderWord("SERVER")...)
-
-var splashLogo = []string{
-	"ggGgggGggg",
-	"GggGgggggG",
-	"dgGdggdggd",
-	"ddsddgddbd",
-	"bdbbtdbdbb",
-	"dbddbbdtdd",
-	"bbdsddbbdb",
-	"dtbdbddbbd",
-	"bddbdsbddb",
-}
-
-type logoSeg struct {
-	Text string
-	Key  string
-}
-
-type logEntry struct {
-	name string
-	line string
-}
-
-type app struct {
-	store    *config.Store
-	dataDir  string
-	managers *tui.State[[]*server.Manager]
-	// splash se muestra al arrancar hasta pulsar una tecla o agotar los
-	// ticks del timer de refresh. splashTicks solo lo toca ese timer.
-	splash      *tui.State[bool]
-	splashTicks int
-	// logCh agrega los logs de todas las instancias: los watchers se
-	// registran al montar, así que un canal único permite añadir
-	// instancias en caliente.
-	logCh chan logEntry
-
-	selected  *tui.State[int]
-	statuses  *tui.State[map[string]server.Status]
-	logs      *tui.State[map[string][]string]
-	cmdActive *tui.State[bool]
-	cmdText   *tui.State[string]
-
-	// Gestión de instancias (v0.1.1): renombrar y eliminar con confirmación.
-	// delTarget guarda el nombre pendiente de confirmar ("" = sin diálogo).
-	renActive *tui.State[bool]
-	renText   *tui.State[string]
-	renMsg    *tui.State[string]
-	delTarget *tui.State[string]
-
-	collector *metrics.Collector
-	samples   *tui.State[map[string]metrics.Sample]
-	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
-	lastPIDs map[string]int
-
-	// Estado del asistente. wizGen invalida goroutines de un asistente
-	// cancelado para que no re-abran la UI.
-	wizStep     *tui.State[int]
-	wizGen      *tui.State[int]
-	wizTypeIdx  *tui.State[int]
-	wizVersions *tui.State[[]string]
-	wizVerIdx   *tui.State[int]
-	wizName     *tui.State[string]
-	wizMemory   *tui.State[string]
-	wizMsg      *tui.State[string]
-
-	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
-	// se incrementa tras cada mutación para forzar el re-render.
-	fmOpen      *tui.State[bool]
-	fmTab       *tui.State[int]
-	fmProps     *properties.File
-	fmRev       *tui.State[int]
-	fmPropsIdx  *tui.State[int]
-	fmEditing   *tui.State[bool]
-	fmEditText  *tui.State[string]
-	fmDirty     *tui.State[bool]
-	fmWorlds    *tui.State[[]string]
-	fmPlugins   *tui.State[[]string]
-	fmWorldIdx  *tui.State[int]
-	fmPluginIdx *tui.State[int]
-	fmConfirm   *tui.State[string]
-	fmMsg       *tui.State[string]
-
-	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
-	// cerrado, igual que wizGen.
-	mr        *modrinth.Client
-	mrOpen    *tui.State[bool]
-	mrTyping  *tui.State[bool]
-	mrQuery   *tui.State[string]
-	mrResults *tui.State[[]modrinth.Project]
-	mrIdx     *tui.State[int]
-	mrBusy    *tui.State[bool]
-	mrGen     *tui.State[int]
-	mrMsg     *tui.State[string]
-}
-
-type wizItem struct {
-	Text string
-	Sel  bool
-}
-
-type hint struct {
-	K string
-	L string
-}
-
-func renderWord(word string) []string {
-	rows := make([]string, 5)
-	for r := 0; r < 5; r++ {
-		for i, ch := range word {
-			if i > 0 {
-				rows[r] += blank + blank
-			}
-			for _, c := range splashFont[ch][r] {
-				if c == '█' {
-					rows[r] += "██"
-				} else {
-					rows[r] += blank + blank
-				}
-			}
-		}
-	}
-	return rows
-}
-
-func splashLogoRows() [][]logoSeg {
-	rows := make([][]logoSeg, len(splashLogo))
-	for i, row := range splashLogo {
-		var segs []logoSeg
-		for _, c := range row {
-			key := string(c)
-			if n := len(segs); n > 0 && segs[n-1].Key == key {
-				segs[n-1].Text += "██"
-				continue
-			}
-			segs = append(segs, logoSeg{Text: "██", Key: key})
-		}
-		rows[i] = segs
-	}
-	return rows
-}
-
-func App(store *config.Store, managers []*server.Manager) *app {
-	statuses := map[string]server.Status{}
-	logs := map[string][]string{}
-	for _, m := range managers {
-		statuses[m.Instance().Name] = m.Status()
-		logs[m.Instance().Name] = nil
-	}
-	a := &app{
-		store:     store,
-		dataDir:   filepath.Dir(store.Path()),
-		managers:  tui.NewState(managers),
-		splash:    tui.NewState(true),
-		logCh:     make(chan logEntry, 2048),
-		selected:  tui.NewState(0),
-		statuses:  tui.NewState(statuses),
-		logs:      tui.NewState(logs),
-		cmdActive: tui.NewState(false),
-		cmdText:   tui.NewState(""),
-		renActive: tui.NewState(false),
-		renText:   tui.NewState(""),
-		renMsg:    tui.NewState(""),
-		delTarget: tui.NewState(""),
-		collector: metrics.NewCollector(),
-		samples:   tui.NewState(map[string]metrics.Sample{}),
-		lastPIDs:  map[string]int{},
-
-		wizStep:     tui.NewState(wizOff),
-		wizGen:      tui.NewState(0),
-		wizTypeIdx:  tui.NewState(0),
-		wizVersions: tui.NewState([]string{}),
-		wizVerIdx:   tui.NewState(0),
-		wizName:     tui.NewState(""),
-		wizMemory:   tui.NewState(""),
-		wizMsg:      tui.NewState(""),
-
-		fmOpen:      tui.NewState(false),
-		fmTab:       tui.NewState(0),
-		fmProps:     &properties.File{},
-		fmRev:       tui.NewState(0),
-		fmPropsIdx:  tui.NewState(0),
-		fmEditing:   tui.NewState(false),
-		fmEditText:  tui.NewState(""),
-		fmDirty:     tui.NewState(false),
-		fmWorlds:    tui.NewState([]string{}),
-		fmPlugins:   tui.NewState([]string{}),
-		fmWorldIdx:  tui.NewState(0),
-		fmPluginIdx: tui.NewState(0),
-		fmConfirm:   tui.NewState(""),
-		fmMsg:       tui.NewState(""),
-
-		mr:        &modrinth.Client{},
-		mrOpen:    tui.NewState(false),
-		mrTyping:  tui.NewState(false),
-		mrQuery:   tui.NewState(""),
-		mrResults: tui.NewState([]modrinth.Project{}),
-		mrIdx:     tui.NewState(0),
-		mrBusy:    tui.NewState(false),
-		mrGen:     tui.NewState(0),
-		mrMsg:     tui.NewState(""),
-	}
-	for _, m := range managers {
-		a.pumpLogs(m)
-	}
-	return a
-}
-
-func (a *app) pumpLogs(m *server.Manager) {
-	go func() {
-		for line := range m.Logs() {
-			a.logCh <- logEntry{name: m.Instance().Name, line: line}
-		}
-	}()
-}
-
-func (a *app) current() *server.Manager {
-	managers := a.managers.Get()
-	i := a.selected.Get()
-	if i < 0 || i >= len(managers) {
-		return nil
-	}
-	return managers[i]
-}
-
-func (a *app) moveSelection(delta int) {
-	n := len(a.managers.Get())
-	if n == 0 {
-		return
-	}
-	a.selected.Update(func(i int) int {
-		i += delta
-		if i < 0 {
-			i = 0
-		}
-		if i >= n {
-			i = n - 1
-		}
-		return i
-	})
-}
-
-func (a *app) appendLog(name, line string) {
-	a.logs.Update(func(m map[string][]string) map[string][]string {
-		lines := append(m[name], line)
-		if len(lines) > maxLogLines {
-			lines = lines[len(lines)-maxLogLines:]
-		}
-		m[name] = lines
-		return m
-	})
-}
-
-func (a *app) refreshStatuses() {
-	// Auto-descarta el splash tras ~3s (6 ticks de 500ms).
-	if a.splash.Get() {
-		a.splashTicks++
-		if a.splashTicks >= 6 {
-			a.splash.Set(false)
-		}
-	}
-	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
-		for _, mgr := range a.managers.Get() {
-			m[mgr.Instance().Name] = mgr.Status()
-		}
-		return m
-	})
-	a.refreshSamples()
-}
-
-func (a *app) refreshSamples() {
-	a.samples.Update(func(m map[string]metrics.Sample) map[string]metrics.Sample {
-		for _, mgr := range a.managers.Get() {
-			name := mgr.Instance().Name
-			pid := mgr.PID()
-			if old := a.lastPIDs[name]; old != 0 && old != pid {
-				a.collector.Forget(old)
-			}
-			a.lastPIDs[name] = pid
-			if pid == 0 {
-				delete(m, name)
-				continue
-			}
-			s, err := a.collector.Sample(pid)
-			if err != nil {
-				// El proceso pudo morir entre PID() y Sample(); se limpia solo.
-				delete(m, name)
-				continue
-			}
-			m[name] = s
-		}
-		return m
-	})
-}
-
-func (a *app) metricText(name string) string {
-	s, ok := a.samples.Get()[name]
-	if !ok {
-		return ""
-	}
-	return fmt.Sprintf("cpu %.1f%% · ram %dM", s.CPUPercent, s.RSSBytes/(1024*1024))
-}
-
-func (a *app) startSelected() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	go func() {
-		if err := mgr.Start(); err != nil {
-			a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
-		}
-	}()
-}
-
-func (a *app) stopSelected() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	go func() {
-		if err := mgr.Stop(stopTimeout); err != nil {
-			a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
-		}
-	}()
-}
-
-func (a *app) restartSelected() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	go func() {
-		if err := mgr.Restart(stopTimeout); err != nil {
-			a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
-		}
-	}()
-}
-
-func (a *app) appendCmdChar(ke tui.KeyEvent) {
-	a.cmdText.Update(func(s string) string { return s + string(ke.Rune) })
-}
-
-func (a *app) deleteCmdChar(ke tui.KeyEvent) {
-	a.cmdText.Update(func(s string) string {
-		r := []rune(s)
-		if len(r) == 0 {
-			return s
-		}
-		return string(r[:len(r)-1])
-	})
-}
-
-func (a *app) submitCmd(ke tui.KeyEvent) {
-	text := a.cmdText.Get()
-	a.cmdText.Set("")
-	if text == "" {
-		return
-	}
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	a.appendLog(mgr.Instance().Name, "> "+text)
-	if err := mgr.Send(text); err != nil {
-		a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
-	}
-}
-
-func (a *app) closeCmd(ke tui.KeyEvent) {
-	a.cmdActive.Set(false)
-	a.cmdText.Set("")
-}
-
-func (a *app) renOpen() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	if mgr.Status() != server.Stopped {
-		a.appendLog(mgr.Instance().Name, "[mc-tui] Stop the server before renaming")
-		return
-	}
-	a.renText.Set(mgr.Instance().Name)
-	a.renMsg.Set("")
-	a.renActive.Set(true)
-}
-
-func (a *app) renClose() {
-	a.renActive.Set(false)
-	a.renText.Set("")
-	a.renMsg.Set("")
-}
-
-func (a *app) renCommit() {
-	mgr := a.current()
-	if mgr == nil {
-		a.renClose()
-		return
-	}
-	old := mgr.Instance().Name
-	name := a.renText.Get()
-	if name == old {
-		a.renClose()
-		return
-	}
-	if name == "" {
-		a.renMsg.Set("The name cannot be empty")
-		return
-	}
-	if _, exists := a.store.Get(name); exists {
-		a.renMsg.Set(fmt.Sprintf("An instance named %q already exists", name))
-		return
-	}
-	if mgr.Status() != server.Stopped {
-		a.renMsg.Set("Stop the server before renaming")
-		return
-	}
-	inst := mgr.Instance()
-	if filepath.Base(inst.Dir) == old {
-		newDir := filepath.Join(filepath.Dir(inst.Dir), name)
-		if err := os.Rename(inst.Dir, newDir); err != nil {
-			a.renMsg.Set("Error: " + err.Error())
-			return
-		}
-		inst.Dir = newDir
-	}
-	inst.Name = name
-	if err := a.store.Rename(old, name); err != nil {
-		a.renMsg.Set("Error: " + err.Error())
-		return
-	}
-	if err := a.store.Update(inst); err != nil {
-		a.renMsg.Set("Error: " + err.Error())
-		return
-	}
-	if err := a.store.Save(); err != nil {
-		a.renMsg.Set("Error: " + err.Error())
-		return
-	}
-	// El manager está detenido (chequeado arriba): SetInstance no falla.
-	_ = mgr.SetInstance(inst)
-	a.logs.Update(func(m map[string][]string) map[string][]string {
-		m[name] = m[old]
-		delete(m, old)
-		return m
-	})
-	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
-		m[name] = server.Stopped
-		delete(m, old)
-		return m
-	})
-	a.appendLog(name, fmt.Sprintf("[mc-tui] Renamed %q to %q", old, name))
-	a.renClose()
-}
-
-func (a *app) delAsk() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	if mgr.Status() != server.Stopped {
-		a.appendLog(mgr.Instance().Name, "[mc-tui] Stop the server before deleting the instance")
-		return
-	}
-	a.delTarget.Set(mgr.Instance().Name)
-}
-
-func (a *app) delDo() {
-	name := a.delTarget.Get()
-	a.delTarget.Set("")
-	mgr := a.current()
-	if mgr == nil || name == "" || mgr.Instance().Name != name {
-		return
-	}
-	if mgr.Status() != server.Stopped {
-		a.appendLog(name, "[mc-tui] Stop the server before deleting the instance")
-		return
-	}
-	inst := mgr.Instance()
-	// La carpeta se borra solo si no apunta al propio directorio de datos
-	// (un instances.json editado a mano podría hacerlo).
-	if inst.Dir != "" && filepath.Clean(inst.Dir) != filepath.Clean(a.dataDir) {
-		if err := os.RemoveAll(inst.Dir); err != nil {
-			a.appendLog(name, "[mc-tui] Error: "+err.Error())
-			return
-		}
-	}
-	if err := a.store.Remove(name); err != nil {
-		a.appendLog(name, "[mc-tui] Error: "+err.Error())
-		return
-	}
-	if err := a.store.Save(); err != nil {
-		a.appendLog(name, "[mc-tui] Error: "+err.Error())
-		return
-	}
-	// Detenido (chequeado arriba): Close no falla y termina el pump de logs.
-	_ = mgr.Close()
-	a.managers.Update(func(ms []*server.Manager) []*server.Manager {
-		for i, m := range ms {
-			if m == mgr {
-				return append(ms[:i], ms[i+1:]...)
-			}
-		}
-		return ms
-	})
-	a.selected.Update(func(i int) int {
-		n := len(a.managers.Get())
-		if n == 0 {
-			return 0
-		}
-		if i >= n {
-			return n - 1
-		}
-		return i
-	})
-	a.logs.Update(func(m map[string][]string) map[string][]string {
-		delete(m, name)
-		return m
-	})
-	a.statuses.Update(func(m map[string]server.Status) map[string]server.Status {
-		delete(m, name)
-		return m
-	})
-}
-
-func (a *app) wizOpen() {
-	a.wizGen.Update(func(g int) int { return g + 1 })
-	a.wizTypeIdx.Set(0)
-	a.wizVersions.Set([]string{})
-	a.wizVerIdx.Set(0)
-	a.wizName.Set("")
-	a.wizMemory.Set("")
-	a.wizMsg.Set("")
-	a.wizStep.Set(wizType)
-}
-
-func (a *app) wizClose() {
-	a.wizGen.Update(func(g int) int { return g + 1 })
-	a.wizStep.Set(wizOff)
+type HintsRowView struct {
+	Root      *tui.Element
+	watchers  []tui.Watcher
+	bindApp   func(*tui.App)
+	unbindApp func()
 }
 
-func (a *app) wizFail(gen int, err error) {
-	if a.wizGen.Get() != gen {
-		return
+func (v *HintsRowView) UnbindApp() {
+	if v.unbindApp != nil {
+		v.unbindApp()
 	}
-	a.wizMsg.Set("Error: " + err.Error())
-	a.wizStep.Set(wizError)
 }
 
-func (a *app) wizFetchVersions() {
-	typ := wizTypes[a.wizTypeIdx.Get()]
-	gen := a.wizGen.Get()
-	a.wizMsg.Set(fmt.Sprintf("Fetching %s versions...", typ))
-	a.wizStep.Set(wizLoading)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		prov, err := download.For(typ, nil)
-		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		versions, err := prov.Versions(ctx)
-		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		if len(versions) == 0 {
-			a.wizFail(gen, fmt.Errorf("the %s API returned no versions", typ))
-			return
-		}
-		if a.wizGen.Get() != gen {
-			return
-		}
-		a.wizVersions.Set(versions)
-		a.wizVerIdx.Set(0)
-		a.wizStep.Set(wizVersion)
-	}()
-}
-
-func validNameChar(r rune) bool {
-	switch {
-	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-		return true
-	}
-	return false
-}
-
-func (a *app) wizSubmitName() {
-	name := a.wizName.Get()
-	if name == "" {
-		a.wizMsg.Set("The name cannot be empty")
-		return
-	}
-	if _, exists := a.store.Get(name); exists {
-		a.wizMsg.Set(fmt.Sprintf("An instance named %q already exists", name))
-		return
-	}
-	a.wizMsg.Set("")
-	a.wizStep.Set(wizMem)
-}
-
-func (a *app) wizMemoryMB() int {
-	mb, err := strconv.Atoi(a.wizMemory.Get())
-	if err != nil || mb <= 0 {
-		return 2048
-	}
-	return mb
-}
-
-func (a *app) wizStartDownload() {
-	typ := wizTypes[a.wizTypeIdx.Get()]
-	version := a.wizVersions.Get()[a.wizVerIdx.Get()]
-	name := a.wizName.Get()
-	memMB := a.wizMemoryMB()
-	gen := a.wizGen.Get()
-	a.wizMsg.Set("Resolving download URL...")
-	a.wizStep.Set(wizDownload)
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
-		defer cancel()
-		prov, err := download.For(typ, nil)
-		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		url, err := prov.ResolveJarURL(ctx, version)
-		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		dir := filepath.Join(a.dataDir, "servers", name)
-		jar := filepath.Join(dir, "server.jar")
-		err = download.DownloadFile(ctx, nil, url, jar, func(done, total int64) {
-			if total > 0 {
-				a.wizMsg.Set(fmt.Sprintf("Downloading... %d%% (%dMB of %dMB)",
-					done*100/total, done/(1024*1024), total/(1024*1024)))
-			} else {
-				a.wizMsg.Set(fmt.Sprintf("Downloading... %dMB", done/(1024*1024)))
-			}
-		})
-		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		// El usuario aceptó el EULA en el paso anterior del asistente.
-		if err := os.WriteFile(filepath.Join(dir, "eula.txt"), []byte("eula=true\n"), 0o644); err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		inst := config.Instance{
-			Name:     name,
-			Dir:      dir,
-			JarPath:  "server.jar",
-			MemoryMB: memMB,
-			Type:     typ,
-			Version:  version,
-		}
-		if err := a.store.Add(inst); err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		if err := a.store.Save(); err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		mgr := server.New(inst)
-		a.pumpLogs(mgr)
-		a.managers.Update(func(ms []*server.Manager) []*server.Manager {
-			return append(ms, mgr)
-		})
-		a.appendLog(name, fmt.Sprintf("[mc-tui] Instance created: %s %s (%d MB)", typ, version, memMB))
-		a.selected.Set(len(a.managers.Get()) - 1)
-		a.wizClose()
-	}()
-}
-
-func (a *app) wizTypeItems() []wizItem {
-	items := make([]wizItem, len(wizTypes))
-	for i, t := range wizTypes {
-		items[i] = wizItem{Text: string(t), Sel: i == a.wizTypeIdx.Get()}
-	}
-	return items
-}
-
-func (a *app) wizVersionItems() []wizItem {
-	return fullItems(a.wizVersions.Get(), a.wizVerIdx.Get())
-}
-
-func (a *app) wizMoveType(delta int) {
-	a.wizTypeIdx.Update(func(i int) int {
-		i += delta
-		if i < 0 {
-			i = 0
-		}
-		if i >= len(wizTypes) {
-			i = len(wizTypes) - 1
-		}
-		return i
-	})
-}
-
-func (a *app) wizMoveVersion(delta int) {
-	n := len(a.wizVersions.Get())
-	a.wizVerIdx.Update(func(i int) int {
-		i += delta
-		if i < 0 {
-			i = 0
-		}
-		if i >= n {
-			i = n - 1
-		}
-		return i
-	})
-}
-
-func (a *app) wizKeyMap() tui.KeyMap {
-	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.wizClose() })
-	switch a.wizStep.Get() {
-	case wizType:
-		return tui.KeyMap{
-			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.wizMoveType(-1) }),
-			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizMoveType(1) }),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizFetchVersions() }),
-			esc,
-		}
-	case wizLoading:
-		return tui.KeyMap{esc}
-	case wizVersion:
-		return tui.KeyMap{
-			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.wizMoveVersion(-1) }),
-			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizMoveVersion(1) }),
-			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.wizMoveVersion(-10) }),
-			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMoveVersion(10) }),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizName) }),
-			esc,
-		}
-	case wizName:
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
-				if validNameChar(ke.Rune) {
-					a.wizName.Update(func(s string) string { return s + string(ke.Rune) })
-				}
-			}),
-			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
-				a.wizName.Update(func(s string) string {
-					if len(s) == 0 {
-						return s
-					}
-					return s[:len(s)-1]
-				})
-			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizSubmitName() }),
-			esc,
-		}
-	case wizMem:
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
-				if ke.Rune >= '0' && ke.Rune <= '9' {
-					a.wizMemory.Update(func(s string) string { return s + string(ke.Rune) })
-				}
-			}),
-			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
-				a.wizMemory.Update(func(s string) string {
-					if len(s) == 0 {
-						return s
-					}
-					return s[:len(s)-1]
-				})
-			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizEula) }),
-			esc,
-		}
-	case wizEula:
-		return tui.KeyMap{
-			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.wizStartDownload() }),
-			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizClose() }),
-			esc,
-		}
-	case wizDownload:
-		// Sin teclas: la descarga no se cancela a mitad en esta versión.
-		return tui.KeyMap{tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {})}
-	default: // wizError
-		return tui.KeyMap{esc, tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizClose() })}
-	}
-}
-
-func (a *app) fmOpenPanel() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	inst := mgr.Instance()
-	a.fmTab.Set(0)
-	a.fmPropsIdx.Set(0)
-	a.fmWorldIdx.Set(0)
-	a.fmPluginIdx.Set(0)
-	a.fmEditing.Set(false)
-	a.fmDirty.Set(false)
-	a.fmConfirm.Set("")
-	a.fmMsg.Set("")
-
-	props, err := properties.Load(filepath.Join(inst.Dir, "server.properties"))
-	if err != nil {
-		a.fmMsg.Set("Error: " + err.Error())
-		props = &properties.File{}
-	}
-	a.fmProps = props
-	a.fmReloadLists(inst)
-	a.fmRev.Update(func(r int) int { return r + 1 })
-	a.fmOpen.Set(true)
-}
-
-func (a *app) fmReloadLists(inst config.Instance) {
-	worlds, err := assets.Worlds(inst.Dir)
-	if err != nil {
-		a.fmMsg.Set("Error: " + err.Error())
-	}
-	a.fmWorlds.Set(worlds)
-	plugins, err := assets.Plugins(inst.Dir, inst.Type)
-	if err != nil {
-		a.fmMsg.Set("Error: " + err.Error())
-	}
-	a.fmPlugins.Set(plugins)
-}
-
-func (a *app) fmClose() {
-	a.fmOpen.Set(false)
-}
-
-func (a *app) fmPropLines() []string {
-	keys := a.fmProps.Keys()
-	out := make([]string, len(keys))
-	for i, k := range keys {
-		v, _ := a.fmProps.Get(k)
-		out[i] = k + "=" + v
-	}
-	return out
-}
-
-func fullItems(list []string, sel int) []wizItem {
-	items := make([]wizItem, len(list))
-	for i, s := range list {
-		items[i] = wizItem{Text: s, Sel: i == sel}
-	}
-	return items
-}
-
-func scrollTo(sel int) int {
-	y := sel - 4
-	if y < 0 {
-		return 0
-	}
-	return y
-}
-
-func (a *app) fmItems() []wizItem {
-	switch a.fmTab.Get() {
-	case 0:
-		return fullItems(a.fmPropLines(), a.fmPropsIdx.Get())
-	case 1:
-		return fullItems(a.fmWorlds.Get(), a.fmWorldIdx.Get())
-	default:
-		return fullItems(a.fmPlugins.Get(), a.fmPluginIdx.Get())
-	}
-}
-
-func (a *app) fmScrollY() int {
-	switch a.fmTab.Get() {
-	case 0:
-		return scrollTo(a.fmPropsIdx.Get())
-	case 1:
-		return scrollTo(a.fmWorldIdx.Get())
-	default:
-		return scrollTo(a.fmPluginIdx.Get())
-	}
-}
-
-func (a *app) fmMove(delta int) {
-	move := func(st *tui.State[int], n int) {
-		if n == 0 {
-			return
-		}
-		st.Update(func(i int) int {
-			i += delta
-			if i < 0 {
-				i = 0
-			}
-			if i >= n {
-				i = n - 1
-			}
-			return i
-		})
-	}
-	switch a.fmTab.Get() {
-	case 0:
-		move(a.fmPropsIdx, len(a.fmProps.Keys()))
-	case 1:
-		move(a.fmWorldIdx, len(a.fmWorlds.Get()))
-	default:
-		move(a.fmPluginIdx, len(a.fmPlugins.Get()))
-	}
-}
-
-func (a *app) fmSelectedKey() string {
-	keys := a.fmProps.Keys()
-	i := a.fmPropsIdx.Get()
-	if i < 0 || i >= len(keys) {
-		return ""
-	}
-	return keys[i]
-}
-
-func (a *app) fmBeginEdit() {
-	key := a.fmSelectedKey()
-	if key == "" {
-		return
-	}
-	v, _ := a.fmProps.Get(key)
-	a.fmEditText.Set(v)
-	a.fmEditing.Set(true)
-	a.fmMsg.Set("")
-}
-
-func (a *app) fmCommitEdit() {
-	key := a.fmSelectedKey()
-	a.fmProps.Set(key, a.fmEditText.Get())
-	a.fmDirty.Set(true)
-	a.fmEditing.Set(false)
-	a.fmRev.Update(func(r int) int { return r + 1 })
-	a.fmMsg.Set("Changed in memory; press w to save")
-}
-
-func (a *app) fmSave() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	path := filepath.Join(mgr.Instance().Dir, "server.properties")
-	if err := a.fmProps.Save(path); err != nil {
-		a.fmMsg.Set("Error: " + err.Error())
-		return
-	}
-	a.fmDirty.Set(false)
-	a.fmMsg.Set("Saved. Restart the server to apply the changes")
-}
-
-func (a *app) fmAskDelete() {
-	mgr := a.current()
-	if mgr == nil {
-		return
-	}
-	if mgr.Status() != server.Stopped {
-		a.fmMsg.Set("Stop the server before deleting files")
-		return
-	}
-	var name string
-	switch a.fmTab.Get() {
-	case 1:
-		if ws := a.fmWorlds.Get(); len(ws) > 0 {
-			name = ws[a.fmWorldIdx.Get()]
-		}
-	case 2:
-		if ps := a.fmPlugins.Get(); len(ps) > 0 {
-			name = ps[a.fmPluginIdx.Get()]
-		}
-	}
-	if name == "" {
-		return
-	}
-	a.fmConfirm.Set(name)
-}
-
-func (a *app) fmDoDelete() {
-	mgr := a.current()
-	name := a.fmConfirm.Get()
-	a.fmConfirm.Set("")
-	if mgr == nil || name == "" {
-		return
-	}
-	inst := mgr.Instance()
-	var err error
-	if a.fmTab.Get() == 1 {
-		err = assets.DeleteWorld(inst.Dir, name)
-	} else {
-		err = assets.DeletePlugin(inst.Dir, inst.Type, name)
-	}
-	if err != nil {
-		a.fmMsg.Set("Error: " + err.Error())
-		return
-	}
-	a.fmMsg.Set(fmt.Sprintf("%q deleted", name))
-	a.fmWorldIdx.Set(0)
-	a.fmPluginIdx.Set(0)
-	a.fmReloadLists(inst)
-}
-
-func (a *app) fmTitle() string {
-	_ = a.fmRev.Get() // dependencia explícita: re-render tras mutar fmProps
-	title := fmt.Sprintf("Files — %s · %s", a.currentName(), a.fmTabName())
-	if a.fmDirty.Get() {
-		title += " (unsaved)"
-	}
-	return title
-}
+func (v *HintsRowView) GetRoot() *tui.Element { return v.Root }
 
-func (a *app) mainHints() []hint {
-	return []hint{
-		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
-		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
-		{"n", "new"}, {"R", "rename"}, {"d", "delete"}, {"q", "quit"},
-	}
-}
-
-func (a *app) wizHints() []hint {
-	switch a.wizStep.Get() {
-	case wizType:
-		return []hint{{"↑/↓", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
-	case wizLoading:
-		return []hint{{"Esc", "cancel"}}
-	case wizVersion:
-		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
-	case wizName:
-		return []hint{{"a-z 0-9 - _", "type"}, {"Enter", "continue"}, {"Esc", "cancel"}}
-	case wizMem:
-		return []hint{{"0-9", "type (empty = 2048)"}, {"Enter", "continue"}, {"Esc", "cancel"}}
-	case wizEula:
-		return []hint{{"y", "accept & download"}, {"n/Esc", "cancel"}}
-	case wizError:
-		return []hint{{"Esc", "close"}}
-	default: // wizDownload: no hay teclas activas
-		return nil
-	}
-}
-
-func (a *app) fmHints() []hint {
-	if a.fmEditing.Get() {
-		return []hint{{"Enter", "apply"}, {"Esc", "cancel"}}
-	}
-	if a.fmConfirm.Get() != "" {
-		return []hint{{"y", "delete"}, {"n/Esc", "keep"}}
-	}
-	if a.fmTab.Get() == 0 {
-		return []hint{{"↑/↓", "select"}, {"Enter", "edit"}, {"w", "save"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
-	}
-	return []hint{{"↑/↓", "select"}, {"d", "delete"}, {"1/2/3 Tab", "switch tab"}, {"Esc", "close"}}
-}
-
-func (a *app) mrHints() []hint {
-	if a.mrTyping.Get() {
-		return []hint{{"Enter", "search"}, {"Esc", "close"}}
-	}
-	return []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}, {"Esc", "close"}}
-}
+func (v *HintsRowView) GetWatchers() []tui.Watcher { return v.watchers }
 
-func (a *app) fmTabName() string {
-	switch a.fmTab.Get() {
-	case 0:
-		return "Properties"
-	case 1:
-		return "Worlds"
-	default:
-		return "Plugins/Mods"
-	}
-}
-
-func (a *app) fmKeyMap() tui.KeyMap {
-	if a.fmEditing.Get() {
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
-				a.fmEditText.Update(func(s string) string { return s + string(ke.Rune) })
-			}),
-			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
-				a.fmEditText.Update(func(s string) string {
-					r := []rune(s)
-					if len(r) == 0 {
-						return s
-					}
-					return string(r[:len(r)-1])
-				})
-			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.fmCommitEdit() }),
-			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmEditing.Set(false) }),
-		}
-	}
-	if a.fmConfirm.Get() != "" {
-		return tui.KeyMap{
-			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.fmDoDelete() }),
-			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
-			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmConfirm.Set("") }),
-		}
-	}
-	return tui.KeyMap{
-		tui.OnStop(tui.Rune('1'), func(ke tui.KeyEvent) { a.fmTab.Set(0) }),
-		tui.OnStop(tui.Rune('2'), func(ke tui.KeyEvent) { a.fmTab.Set(1) }),
-		tui.OnStop(tui.Rune('3'), func(ke tui.KeyEvent) { a.fmTab.Set(2) }),
-		tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.fmTab.Update(func(t int) int { return (t + 1) % 3 }) }),
-		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.fmMove(-1) }),
-		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.fmMove(1) }),
-		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.fmMove(-10) }),
-		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.fmMove(10) }),
-		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
-			if a.fmTab.Get() == 0 {
-				a.fmBeginEdit()
-			}
-		}),
-		tui.OnStop(tui.Rune('w'), func(ke tui.KeyEvent) {
-			if a.fmTab.Get() == 0 {
-				a.fmSave()
-			}
-		}),
-		tui.OnStop(tui.Rune('d'), func(ke tui.KeyEvent) {
-			if a.fmTab.Get() != 0 {
-				a.fmAskDelete()
-			}
-		}),
-		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmClose() }),
-	}
-}
+func (v *HintsRowView) Render(app *tui.App) *tui.Element { return v.Root }
 
-func (a *app) mrOpenPanel() {
-	mgr := a.current()
-	if mgr == nil {
-		return
+func (v *HintsRowView) BindApp(app *tui.App) {
+	if v.bindApp != nil {
+		v.bindApp(app)
 	}
-	inst := mgr.Instance()
-	if _, ok := assets.PluginsDir(inst.Type); !ok {
-		a.appendLog(inst.Name, "[mc-tui] vanilla servers do not support plugins/mods")
-		return
-	}
-	a.mrGen.Update(func(g int) int { return g + 1 })
-	a.mrQuery.Set("")
-	a.mrResults.Set([]modrinth.Project{})
-	a.mrIdx.Set(0)
-	a.mrBusy.Set(false)
-	a.mrMsg.Set("")
-	a.mrTyping.Set(true)
-	a.mrOpen.Set(true)
-}
-
-func (a *app) mrClose() {
-	a.mrGen.Update(func(g int) int { return g + 1 })
-	a.mrOpen.Set(false)
 }
 
-func (a *app) mrSearch() {
-	mgr := a.current()
-	query := a.mrQuery.Get()
-	if mgr == nil || query == "" || a.mrBusy.Get() {
-		return
-	}
-	inst := mgr.Instance()
-	gen := a.mrGen.Get()
-	a.mrBusy.Set(true)
-	a.mrMsg.Set("Searching Modrinth...")
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		results, err := a.mr.Search(ctx, query, inst.Type, inst.Version)
-		if a.mrGen.Get() != gen {
-			return
-		}
-		a.mrBusy.Set(false)
-		if err != nil {
-			a.mrMsg.Set("Error: " + err.Error())
-			return
-		}
-		a.mrResults.Set(results)
-		a.mrIdx.Set(0)
-		a.mrTyping.Set(false)
-		if len(results) == 0 {
-			a.mrMsg.Set(fmt.Sprintf("No results for %q compatible with %s %s", query, inst.Type, inst.Version))
-			return
-		}
-		a.mrMsg.Set(fmt.Sprintf("%d results · Enter installs into the selected instance", len(results)))
-	}()
-}
-
-func (a *app) mrInstall() {
-	mgr := a.current()
-	results := a.mrResults.Get()
-	idx := a.mrIdx.Get()
-	if mgr == nil || a.mrBusy.Get() || idx < 0 || idx >= len(results) {
-		return
-	}
-	inst := mgr.Instance()
-	project := results[idx]
-	sub, ok := assets.PluginsDir(inst.Type)
+func (v *HintsRowView) UpdateProps(fresh tui.Component) {
+	f, ok := fresh.(*HintsRowView)
 	if !ok {
 		return
 	}
-	gen := a.mrGen.Get()
-	a.mrBusy.Set(true)
-	a.mrMsg.Set(fmt.Sprintf("Resolving %s...", project.Title))
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-		defer cancel()
-		file, err := a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
-		if err == nil {
-			dest := filepath.Join(inst.Dir, sub, file.Filename)
-			err = download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
-				if a.mrGen.Get() != gen {
-					return
-				}
-				if total > 0 {
-					a.mrMsg.Set(fmt.Sprintf("Downloading %s... %d%%", file.Filename, done*100/total))
-				}
-			})
-		}
-		if a.mrGen.Get() != gen {
-			return
-		}
-		a.mrBusy.Set(false)
-		if err != nil {
-			a.mrMsg.Set("Error: " + err.Error())
-			return
-		}
-		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, file.Filename))
-	}()
+	v.Root = f.Root
+	v.watchers = f.watchers
+	v.bindApp = f.bindApp
+	v.unbindApp = f.unbindApp
 }
 
-func mrDownloadsText(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 1_000:
-		return fmt.Sprintf("%.1fk", float64(n)/1_000)
-	default:
-		return strconv.Itoa(n)
+var _ tui.AppBinder = (*HintsRowView)(nil)
+
+var _ tui.AppUnbinder = (*HintsRowView)(nil)
+
+var _ tui.PropsUpdater = (*HintsRowView)(nil)
+
+func HintsRow(hints []hint, green bool) *HintsRowView {
+	var view HintsRowView
+	var watchers []tui.Watcher
+
+	__tui_0 := tui.New(
+		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+		tui.WithGap(1),
+		tui.WithFlexShrink(0),
+	)
+	for i, h := range hints {
+		_ = i
+		if i > 0 {
+			__tui_1 := tui.New(
+				tui.WithText("|"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_0.AddChild(__tui_1)
+		}
+		if green {
+			__tui_2 := tui.New(
+				tui.WithText(h.K),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
+			)
+			__tui_0.AddChild(__tui_2)
+		} else {
+			__tui_3 := tui.New(
+				tui.WithText(h.K),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_0.AddChild(__tui_3)
+		}
+		__tui_4 := tui.New(
+			tui.WithText(h.L),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_4)
+	}
+
+	__bindApp := func(app *tui.App) {
+	}
+
+	__unbindApp := func() {
+	}
+
+	view = HintsRowView{
+		Root:      __tui_0,
+		watchers:  watchers,
+		bindApp:   __bindApp,
+		unbindApp: __unbindApp,
+	}
+	return &view
+}
+
+type SidebarView struct {
+	Root      *tui.Element
+	watchers  []tui.Watcher
+	bindApp   func(*tui.App)
+	unbindApp func()
+}
+
+func (v *SidebarView) UnbindApp() {
+	if v.unbindApp != nil {
+		v.unbindApp()
 	}
 }
 
-func (a *app) mrItems() []wizItem {
-	results := a.mrResults.Get()
-	lines := make([]string, len(results))
-	for i, p := range results {
-		desc := p.Description
-		if r := []rune(desc); len(r) > 50 {
-			desc = string(r[:50]) + "…"
-		}
-		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+func (v *SidebarView) GetRoot() *tui.Element { return v.Root }
+
+func (v *SidebarView) GetWatchers() []tui.Watcher { return v.watchers }
+
+func (v *SidebarView) Render(app *tui.App) *tui.Element { return v.Root }
+
+func (v *SidebarView) BindApp(app *tui.App) {
+	if v.bindApp != nil {
+		v.bindApp(app)
 	}
-	return fullItems(lines, a.mrIdx.Get())
 }
 
-func (a *app) mrMove(delta int) {
-	n := len(a.mrResults.Get())
-	if n == 0 {
+func (v *SidebarView) UpdateProps(fresh tui.Component) {
+	f, ok := fresh.(*SidebarView)
+	if !ok {
 		return
 	}
-	a.mrIdx.Update(func(i int) int {
-		i += delta
-		if i < 0 {
-			i = 0
-		}
-		if i >= n {
-			i = n - 1
-		}
-		return i
-	})
+	v.Root = f.Root
+	v.watchers = f.watchers
+	v.bindApp = f.bindApp
+	v.unbindApp = f.unbindApp
 }
 
-func (a *app) mrKeyMap() tui.KeyMap {
-	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
-	if a.mrTyping.Get() {
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
-				a.mrQuery.Update(func(s string) string { return s + string(ke.Rune) })
-			}),
-			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
-				a.mrQuery.Update(func(s string) string {
-					r := []rune(s)
-					if len(r) == 0 {
-						return s
-					}
-					return string(r[:len(r)-1])
-				})
-			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrSearch() }),
-			esc,
-		}
+var _ tui.AppBinder = (*SidebarView)(nil)
+
+var _ tui.AppUnbinder = (*SidebarView)(nil)
+
+var _ tui.PropsUpdater = (*SidebarView)(nil)
+
+func Sidebar(a *app) *SidebarView {
+	var view SidebarView
+	var watchers []tui.Watcher
+
+	__tui_0 := tui.New(
+		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		tui.WithBorder(tui.BorderRounded),
+		tui.WithPadding(1),
+		tui.WithFlexShrink(0),
+		tui.WithMinWidth(30),
+	)
+	__tui_1 := tui.New(
+		tui.WithText("Instances"),
+		tui.WithFlexShrink(0),
+		tui.WithTextStyle(tui.NewStyle().Bold()),
+	)
+	__tui_0.AddChild(__tui_1)
+	if len(a.managers.Get()) == 0 {
+		__tui_2 := tui.New(
+			tui.WithText("No instances yet."),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_2)
+		__tui_3 := tui.New(
+			tui.WithText("Press n to create one"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_3)
 	}
-	return tui.KeyMap{
-		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.mrMove(-1) }),
-		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.mrMove(1) }),
-		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.mrMove(-10) }),
-		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMove(10) }),
-		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
-		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
-		esc,
+	for i, mgr := range a.managers.Get() {
+		_ = i
+		__tui_4 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		)
+		__tui_5 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithJustify(tui.JustifySpaceBetween),
+		)
+		if i == a.selected.Get() {
+			__tui_6 := tui.New(
+				tui.WithText(fmt.Sprintf("> %s", mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
+			)
+			__tui_5.AddChild(__tui_6)
+		} else {
+			__tui_7 := tui.New(
+				tui.WithText(fmt.Sprintf("  %s", mgr.Instance().Name)),
+			)
+			__tui_5.AddChild(__tui_7)
+		}
+		if a.statusText(mgr.Instance().Name) == string(server.Running) {
+			__tui_8 := tui.New(
+				tui.WithText(a.statusText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
+			)
+			__tui_5.AddChild(__tui_8)
+		} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
+			__tui_9 := tui.New(
+				tui.WithText(a.statusText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
+			)
+			__tui_5.AddChild(__tui_9)
+		} else {
+			__tui_10 := tui.New(
+				tui.WithText(a.statusText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_5.AddChild(__tui_10)
+		}
+		__tui_4.AddChild(__tui_5)
+		if a.metricText(mgr.Instance().Name) != "" {
+			__tui_11 := tui.New(
+				tui.WithText(a.metricText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_4.AddChild(__tui_11)
+		}
+		__tui_0.AddChild(__tui_4)
+	}
+
+	__bindApp := func(app *tui.App) {
+	}
+
+	__unbindApp := func() {
+	}
+
+	view = SidebarView{
+		Root:      __tui_0,
+		watchers:  watchers,
+		bindApp:   __bindApp,
+		unbindApp: __unbindApp,
+	}
+	return &view
+}
+
+type ConsoleViewView struct {
+	Root      *tui.Element
+	watchers  []tui.Watcher
+	bindApp   func(*tui.App)
+	unbindApp func()
+}
+
+func (v *ConsoleViewView) UnbindApp() {
+	if v.unbindApp != nil {
+		v.unbindApp()
 	}
 }
 
-func (a *app) KeyMap() tui.KeyMap {
-	if a.splash.Get() {
-		dismiss := func(ke tui.KeyEvent) { a.splash.Set(false) }
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, dismiss),
-			tui.OnStop(tui.KeyEnter, dismiss),
-			tui.OnStop(tui.KeyEscape, dismiss),
-		}
+func (v *ConsoleViewView) GetRoot() *tui.Element { return v.Root }
+
+func (v *ConsoleViewView) GetWatchers() []tui.Watcher { return v.watchers }
+
+func (v *ConsoleViewView) Render(app *tui.App) *tui.Element { return v.Root }
+
+func (v *ConsoleViewView) BindApp(app *tui.App) {
+	if v.bindApp != nil {
+		v.bindApp(app)
 	}
-	if a.wizStep.Get() != wizOff {
-		return a.wizKeyMap()
+}
+
+func (v *ConsoleViewView) UpdateProps(fresh tui.Component) {
+	f, ok := fresh.(*ConsoleViewView)
+	if !ok {
+		return
 	}
-	if a.fmOpen.Get() {
-		return a.fmKeyMap()
+	v.Root = f.Root
+	v.watchers = f.watchers
+	v.bindApp = f.bindApp
+	v.unbindApp = f.unbindApp
+}
+
+var _ tui.AppBinder = (*ConsoleViewView)(nil)
+
+var _ tui.AppUnbinder = (*ConsoleViewView)(nil)
+
+var _ tui.PropsUpdater = (*ConsoleViewView)(nil)
+
+func ConsoleView(a *app) *ConsoleViewView {
+	var view ConsoleViewView
+	var watchers []tui.Watcher
+
+	__tui_0 := tui.New(
+		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		tui.WithBorder(tui.BorderRounded),
+		tui.WithPadding(1),
+		tui.WithFlexGrow(1),
+		tui.WithScrollable(tui.ScrollVertical),
+		tui.WithScrollOffset(0, math.MaxInt),
+	)
+	__tui_1 := tui.New(
+		tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
+		tui.WithFlexShrink(0),
+		tui.WithTextStyle(tui.NewStyle().Bold()),
+	)
+	__tui_0.AddChild(__tui_1)
+	for __idx_0, line := range a.currentLogs() {
+		_ = __idx_0
+		__tui_2 := tui.New(
+			tui.WithText(line),
+		)
+		__tui_0.AddChild(__tui_2)
 	}
-	if a.mrOpen.Get() {
-		return a.mrKeyMap()
+
+	__bindApp := func(app *tui.App) {
 	}
+
+	__unbindApp := func() {
+	}
+
+	view = ConsoleViewView{
+		Root:      __tui_0,
+		watchers:  watchers,
+		bindApp:   __bindApp,
+		unbindApp: __unbindApp,
+	}
+	return &view
+}
+
+type FooterBarView struct {
+	Root      *tui.Element
+	watchers  []tui.Watcher
+	bindApp   func(*tui.App)
+	unbindApp func()
+}
+
+func (v *FooterBarView) UnbindApp() {
+	if v.unbindApp != nil {
+		v.unbindApp()
+	}
+}
+
+func (v *FooterBarView) GetRoot() *tui.Element { return v.Root }
+
+func (v *FooterBarView) GetWatchers() []tui.Watcher { return v.watchers }
+
+func (v *FooterBarView) Render(app *tui.App) *tui.Element { return v.Root }
+
+func (v *FooterBarView) BindApp(app *tui.App) {
+	if v.bindApp != nil {
+		v.bindApp(app)
+	}
+}
+
+func (v *FooterBarView) UpdateProps(fresh tui.Component) {
+	f, ok := fresh.(*FooterBarView)
+	if !ok {
+		return
+	}
+	v.Root = f.Root
+	v.watchers = f.watchers
+	v.bindApp = f.bindApp
+	v.unbindApp = f.unbindApp
+}
+
+var _ tui.AppBinder = (*FooterBarView)(nil)
+
+var _ tui.AppUnbinder = (*FooterBarView)(nil)
+
+var _ tui.PropsUpdater = (*FooterBarView)(nil)
+
+func FooterBar(a *app) *FooterBarView {
+	var view FooterBarView
+	var watchers []tui.Watcher
+
+	var __tui_27 *HintsRowView
+	var __tui_0 *tui.Element
 	if a.cmdActive.Get() {
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, a.appendCmdChar),
-			tui.OnStop(tui.KeyBackspace, a.deleteCmdChar),
-			tui.OnStop(tui.KeyEnter, a.submitCmd),
-			tui.OnStop(tui.KeyEscape, a.closeCmd),
+		__tui_1 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_2 := tui.New(
+			tui.WithText(fmt.Sprintf("%s >", a.currentName())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_1.AddChild(__tui_2)
+		__tui_3 := tui.New(
+			tui.WithText(a.cmdText.Get()),
+		)
+		__tui_1.AddChild(__tui_3)
+		__tui_4 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+		)
+		__tui_1.AddChild(__tui_4)
+		__tui_5 := tui.New(
+			tui.WithText("Enter"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_1.AddChild(__tui_5)
+		__tui_6 := tui.New(
+			tui.WithText("sends"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_1.AddChild(__tui_6)
+		__tui_7 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_1.AddChild(__tui_7)
+		__tui_8 := tui.New(
+			tui.WithText("Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_1.AddChild(__tui_8)
+		__tui_9 := tui.New(
+			tui.WithText("closes"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_1.AddChild(__tui_9)
+		if __tui_0 == nil {
+			__tui_0 = __tui_1
+		}
+	} else if a.renActive.Get() {
+		__tui_10 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_11 := tui.New(
+			tui.WithText(fmt.Sprintf("Rename %s to:", a.currentName())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_10.AddChild(__tui_11)
+		__tui_12 := tui.New(
+			tui.WithText(a.renText.Get()),
+		)
+		__tui_10.AddChild(__tui_12)
+		__tui_13 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+		)
+		__tui_10.AddChild(__tui_13)
+		if a.renMsg.Get() != "" {
+			__tui_14 := tui.New(
+				tui.WithText(a.renMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+			)
+			__tui_10.AddChild(__tui_14)
+		}
+		__tui_15 := tui.New(
+			tui.WithText("Enter"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_10.AddChild(__tui_15)
+		__tui_16 := tui.New(
+			tui.WithText("applies"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_10.AddChild(__tui_16)
+		__tui_17 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_10.AddChild(__tui_17)
+		__tui_18 := tui.New(
+			tui.WithText("Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_10.AddChild(__tui_18)
+		__tui_19 := tui.New(
+			tui.WithText("cancels"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_10.AddChild(__tui_19)
+		if __tui_0 == nil {
+			__tui_0 = __tui_10
+		}
+	} else if a.delTarget.Get() != "" {
+		__tui_20 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_21 := tui.New(
+			tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_20.AddChild(__tui_21)
+		__tui_22 := tui.New(
+			tui.WithText("y"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_20.AddChild(__tui_22)
+		__tui_23 := tui.New(
+			tui.WithText("delete"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_20.AddChild(__tui_23)
+		__tui_24 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_20.AddChild(__tui_24)
+		__tui_25 := tui.New(
+			tui.WithText("n/Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_20.AddChild(__tui_25)
+		__tui_26 := tui.New(
+			tui.WithText("keep"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_20.AddChild(__tui_26)
+		if __tui_0 == nil {
+			__tui_0 = __tui_20
+		}
+	} else {
+		__tui_27 = HintsRow(a.mainHints(), false)
+		if __tui_0 == nil {
+			__tui_0 = __tui_27.Root
 		}
 	}
-	if a.renActive.Get() {
-		return tui.KeyMap{
-			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
-				if validNameChar(ke.Rune) {
-					a.renText.Update(func(s string) string { return s + string(ke.Rune) })
-				}
-			}),
-			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
-				a.renText.Update(func(s string) string {
-					if len(s) == 0 {
-						return s
-					}
-					return s[:len(s)-1]
-				})
-			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.renCommit() }),
-			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.renClose() }),
+
+	if __tui_27 != nil {
+		watchers = append(watchers, __tui_27.GetWatchers()...)
+	}
+
+	__bindApp := func(app *tui.App) {
+		if __tui_27 != nil {
+			if binder, ok := any(__tui_27).(tui.AppBinder); ok {
+				binder.BindApp(app)
+			}
 		}
 	}
-	if a.delTarget.Get() != "" {
-		return tui.KeyMap{
-			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.delDo() }),
-			tui.OnStop(tui.Rune('n'), func(ke tui.KeyEvent) { a.delTarget.Set("") }),
-			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.delTarget.Set("") }),
+
+	__unbindApp := func() {
+		if __tui_27 != nil {
+			if unbinder, ok := any(__tui_27).(tui.AppUnbinder); ok {
+				unbinder.UnbindApp()
+			}
 		}
 	}
-	return tui.KeyMap{
-		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
-		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
-		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
-		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
-		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
-		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
-		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
-		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
-		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
-		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
-		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
-		tui.On(tui.Rune('j'), func(ke tui.KeyEvent) { a.moveSelection(1) }),
-		tui.On(tui.Rune('s'), func(ke tui.KeyEvent) { a.startSelected() }),
-		tui.On(tui.Rune('x'), func(ke tui.KeyEvent) { a.stopSelected() }),
-		tui.On(tui.Rune('r'), func(ke tui.KeyEvent) { a.restartSelected() }),
-	}
-}
 
-func (a *app) Watchers() []tui.Watcher {
-	return []tui.Watcher{
-		tui.OnTimer(500*time.Millisecond, a.refreshStatuses),
-		tui.Watch(a.logCh, func(e logEntry) { a.appendLog(e.name, e.line) }),
+	view = FooterBarView{
+		Root:      __tui_0,
+		watchers:  watchers,
+		bindApp:   __bindApp,
+		unbindApp: __unbindApp,
 	}
-}
-
-func (a *app) statusText(name string) string {
-	st := a.statuses.Get()[name]
-	if st == "" {
-		st = server.Stopped
-	}
-	return string(st)
-}
-
-func (a *app) currentLogs() []string {
-	mgr := a.current()
-	if mgr == nil {
-		return nil
-	}
-	return a.logs.Get()[mgr.Instance().Name]
-}
-
-func (a *app) currentName() string {
-	mgr := a.current()
-	if mgr == nil {
-		return "no instance"
-	}
-	return mgr.Instance().Name
-}
-
-func (a *app) wizStepTitle() string {
-	switch a.wizStep.Get() {
-	case wizType:
-		return "1/5 · Server type"
-	case wizLoading:
-		return "2/5 · Fetching versions"
-	case wizVersion:
-		return "2/5 · Version"
-	case wizName:
-		return "3/5 · Instance name"
-	case wizMem:
-		return "4/5 · Memory (MB)"
-	case wizEula:
-		return "5/5 · Minecraft EULA"
-	case wizDownload:
-		return "Downloading"
-	default:
-		return "Error"
-	}
+	return &view
 }
 
 func (a *app) Render(app *tui.App) *tui.Element {
 	var __tui_0 *tui.Element
 	if a.splash.Get() {
-		__tui_1 := tui.New(
-			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-			tui.WithHeightPercent(100.00),
-			tui.WithAlign(tui.AlignCenter),
-			tui.WithJustify(tui.JustifyCenter),
-			tui.WithGap(1),
-		)
-		__tui_2 := tui.New(
-			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-		)
-		for __idx_0, row := range splashLogoRows() {
-			_ = __idx_0
-			__tui_3 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-			)
-			for __idx_1, seg := range row {
-				_ = __idx_1
-				if seg.Key == "g" {
-					__tui_4 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
-					)
-					__tui_3.AddChild(__tui_4)
-				} else if seg.Key == "G" {
-					__tui_5 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(74, 158, 49))),
-					)
-					__tui_3.AddChild(__tui_5)
-				} else if seg.Key == "d" {
-					__tui_6 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(92, 61, 36))),
-					)
-					__tui_3.AddChild(__tui_6)
-				} else if seg.Key == "b" {
-					__tui_7 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(139, 98, 68))),
-					)
-					__tui_3.AddChild(__tui_7)
-				} else if seg.Key == "t" {
-					__tui_8 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(160, 118, 76))),
-					)
-					__tui_3.AddChild(__tui_8)
-				} else {
-					__tui_9 := tui.New(
-						tui.WithText(seg.Text),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(154, 143, 138))),
-					)
-					__tui_3.AddChild(__tui_9)
-				}
-			}
-			__tui_2.AddChild(__tui_3)
-		}
-		__tui_1.AddChild(__tui_2)
-		__tui_10 := tui.New(
-			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-		)
-		for __idx_0, line := range splashTitle {
-			_ = __idx_0
-			__tui_11 := tui.New(
-				tui.WithText(line),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
-			)
-			__tui_10.AddChild(__tui_11)
-		}
-		__tui_1.AddChild(__tui_10)
-		__tui_12 := tui.New(
-			tui.WithText("Press any key to start"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_1.AddChild(__tui_12)
+		__tui_1 := app.Mount(a, 0, func() tui.Component {
+			return SplashView()
+		})
 		if __tui_0 == nil {
 			__tui_0 = __tui_1
 		}
 	} else {
-		__tui_13 := tui.New(
+		__tui_2 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 			tui.WithHeightPercent(100.00),
 			tui.WithPadding(1),
 			tui.WithGap(1),
 		)
-		__tui_14 := tui.New(
+		__tui_3 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithJustify(tui.JustifySpaceBetween),
 			tui.WithFlexShrink(0),
 		)
-		__tui_15 := tui.New(
+		__tui_4 := tui.New(
 			tui.WithText("mc-tui-server"),
 			tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 		)
-		__tui_14.AddChild(__tui_15)
-		__tui_16 := tui.New(
+		__tui_3.AddChild(__tui_4)
+		__tui_5 := tui.New(
 			tui.WithText(fmt.Sprintf("%d instances", len(a.managers.Get()))),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_14.AddChild(__tui_16)
-		__tui_13.AddChild(__tui_14)
-		__tui_17 := tui.New(
+		__tui_3.AddChild(__tui_5)
+		__tui_2.AddChild(__tui_3)
+		__tui_6 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 			tui.WithFlexGrow(1),
 		)
-		__tui_18 := tui.New(
-			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-			tui.WithBorder(tui.BorderRounded),
-			tui.WithPadding(1),
-			tui.WithFlexShrink(0),
-			tui.WithMinWidth(30),
-		)
-		__tui_19 := tui.New(
-			tui.WithText("Instances"),
-			tui.WithFlexShrink(0),
-			tui.WithTextStyle(tui.NewStyle().Bold()),
-		)
-		__tui_18.AddChild(__tui_19)
-		if len(a.managers.Get()) == 0 {
-			__tui_20 := tui.New(
-				tui.WithText("No instances yet."),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_18.AddChild(__tui_20)
-			__tui_21 := tui.New(
-				tui.WithText("Press n to create one"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_18.AddChild(__tui_21)
-		}
-		for i, mgr := range a.managers.Get() {
-			_ = i
-			__tui_22 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-			)
-			__tui_23 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithJustify(tui.JustifySpaceBetween),
-			)
-			if i == a.selected.Get() {
-				__tui_24 := tui.New(
-					tui.WithText(fmt.Sprintf("> %s", mgr.Instance().Name)),
-					tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-				)
-				__tui_23.AddChild(__tui_24)
-			} else {
-				__tui_25 := tui.New(
-					tui.WithText(fmt.Sprintf("  %s", mgr.Instance().Name)),
-				)
-				__tui_23.AddChild(__tui_25)
-			}
-			if a.statusText(mgr.Instance().Name) == string(server.Running) {
-				__tui_26 := tui.New(
-					tui.WithText(a.statusText(mgr.Instance().Name)),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
-				)
-				__tui_23.AddChild(__tui_26)
-			} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
-				__tui_27 := tui.New(
-					tui.WithText(a.statusText(mgr.Instance().Name)),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
-				)
-				__tui_23.AddChild(__tui_27)
-			} else {
-				__tui_28 := tui.New(
-					tui.WithText(a.statusText(mgr.Instance().Name)),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_23.AddChild(__tui_28)
-			}
-			__tui_22.AddChild(__tui_23)
-			if a.metricText(mgr.Instance().Name) != "" {
-				__tui_29 := tui.New(
-					tui.WithText(a.metricText(mgr.Instance().Name)),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_22.AddChild(__tui_29)
-			}
-			__tui_18.AddChild(__tui_22)
-		}
-		__tui_17.AddChild(__tui_18)
+		__tui_7 := Sidebar(a)
+		__tui_6.AddChild(__tui_7.Root)
 		if a.wizStep.Get() != wizOff {
-			__tui_30 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithBorder(tui.BorderRounded),
-				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				tui.WithPadding(1),
-				tui.WithFlexGrow(1),
-			)
-			__tui_31 := tui.New(
-				tui.WithText(fmt.Sprintf("New instance — %s", a.wizStepTitle())),
-				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-			)
-			__tui_30.AddChild(__tui_31)
-			if a.wizStep.Get() == wizType {
-				for __idx_0, item := range a.wizTypeItems() {
-					_ = __idx_0
-					if item.Sel {
-						__tui_32 := tui.New(
-							tui.WithText(fmt.Sprintf("> %s", item.Text)),
-							tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-						)
-						__tui_30.AddChild(__tui_32)
-					} else {
-						__tui_33 := tui.New(
-							tui.WithText(fmt.Sprintf("  %s", item.Text)),
-						)
-						__tui_30.AddChild(__tui_33)
-					}
-				}
-			}
-			if a.wizStep.Get() == wizLoading {
-				__tui_34 := tui.New(
-					tui.WithText(a.wizMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
-				)
-				__tui_30.AddChild(__tui_34)
-			}
-			if a.wizStep.Get() == wizVersion {
-				__tui_35 := tui.New(
-					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-					tui.WithFlexGrow(1),
-					tui.WithScrollable(tui.ScrollVertical),
-					tui.WithScrollOffset(0, scrollTo(a.wizVerIdx.Get())),
-				)
-				for __idx_0, item := range a.wizVersionItems() {
-					_ = __idx_0
-					if item.Sel {
-						__tui_36 := tui.New(
-							tui.WithText(fmt.Sprintf("> %s", item.Text)),
-							tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-						)
-						__tui_35.AddChild(__tui_36)
-					} else {
-						__tui_37 := tui.New(
-							tui.WithText(fmt.Sprintf("  %s", item.Text)),
-						)
-						__tui_35.AddChild(__tui_37)
-					}
-				}
-				__tui_30.AddChild(__tui_35)
-			}
-			if a.wizStep.Get() == wizName {
-				__tui_38 := tui.New(
-					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-					tui.WithGap(1),
-				)
-				__tui_39 := tui.New(
-					tui.WithText("Name:"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_38.AddChild(__tui_39)
-				__tui_40 := tui.New(
-					tui.WithText(a.wizName.Get()),
-				)
-				__tui_38.AddChild(__tui_40)
-				__tui_41 := tui.New(
-					tui.WithText("_"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
-				)
-				__tui_38.AddChild(__tui_41)
-				__tui_30.AddChild(__tui_38)
-				if a.wizMsg.Get() != "" {
-					__tui_42 := tui.New(
-						tui.WithText(a.wizMsg.Get()),
-						tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
-					)
-					__tui_30.AddChild(__tui_42)
-				}
-			}
-			if a.wizStep.Get() == wizMem {
-				__tui_43 := tui.New(
-					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-					tui.WithGap(1),
-				)
-				__tui_44 := tui.New(
-					tui.WithText("Memory (MB):"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_43.AddChild(__tui_44)
-				__tui_45 := tui.New(
-					tui.WithText(a.wizMemory.Get()),
-				)
-				__tui_43.AddChild(__tui_45)
-				__tui_46 := tui.New(
-					tui.WithText("_"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
-				)
-				__tui_43.AddChild(__tui_46)
-				__tui_30.AddChild(__tui_43)
-			}
-			if a.wizStep.Get() == wizEula {
-				__tui_47 := tui.New(
-					tui.WithText("To run the server you must accept the Minecraft EULA:"),
-				)
-				__tui_30.AddChild(__tui_47)
-				__tui_48 := tui.New(
-					tui.WithText("https://aka.ms/MinecraftEULA"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				)
-				__tui_30.AddChild(__tui_48)
-				__tui_49 := tui.New(
-					tui.WithText("Do you accept?"),
-					tui.WithTextStyle(tui.NewStyle().Bold()),
-				)
-				__tui_30.AddChild(__tui_49)
-			}
-			if a.wizStep.Get() == wizDownload {
-				__tui_50 := tui.New(
-					tui.WithText(a.wizMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
-				)
-				__tui_30.AddChild(__tui_50)
-			}
-			if a.wizStep.Get() == wizError {
-				__tui_51 := tui.New(
-					tui.WithText(a.wizMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
-				)
-				__tui_30.AddChild(__tui_51)
-			}
-			__tui_52 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			for i, h := range a.wizHints() {
-				_ = i
-				if i > 0 {
-					__tui_53 := tui.New(
-						tui.WithText("|"),
-						tui.WithTextStyle(tui.NewStyle().Dim()),
-					)
-					__tui_52.AddChild(__tui_53)
-				}
-				__tui_54 := tui.New(
-					tui.WithText(h.K),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_52.AddChild(__tui_54)
-				__tui_55 := tui.New(
-					tui.WithText(h.L),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_52.AddChild(__tui_55)
-			}
-			__tui_30.AddChild(__tui_52)
-			__tui_17.AddChild(__tui_30)
+			__tui_8 := app.Mount(a, 1, func() tui.Component {
+				return WizardView(a)
+			})
+			__tui_6.AddChild(__tui_8)
 		} else if a.fmOpen.Get() {
-			__tui_56 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithBorder(tui.BorderRounded),
-				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				tui.WithPadding(1),
-				tui.WithFlexGrow(1),
-			)
-			__tui_57 := tui.New(
-				tui.WithText(a.fmTitle()),
-				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-			)
-			__tui_56.AddChild(__tui_57)
-			__tui_58 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			__tui_59 := tui.New(
-				tui.WithText("1"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_58.AddChild(__tui_59)
-			if a.fmTab.Get() == 0 {
-				__tui_60 := tui.New(
-					tui.WithText("Properties"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				)
-				__tui_58.AddChild(__tui_60)
-			} else {
-				__tui_61 := tui.New(
-					tui.WithText("Properties"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_58.AddChild(__tui_61)
-			}
-			__tui_62 := tui.New(
-				tui.WithText("2"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_58.AddChild(__tui_62)
-			if a.fmTab.Get() == 1 {
-				__tui_63 := tui.New(
-					tui.WithText("Worlds"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				)
-				__tui_58.AddChild(__tui_63)
-			} else {
-				__tui_64 := tui.New(
-					tui.WithText("Worlds"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_58.AddChild(__tui_64)
-			}
-			__tui_65 := tui.New(
-				tui.WithText("3"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_58.AddChild(__tui_65)
-			if a.fmTab.Get() == 2 {
-				__tui_66 := tui.New(
-					tui.WithText("Plugins/Mods"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-				)
-				__tui_58.AddChild(__tui_66)
-			} else {
-				__tui_67 := tui.New(
-					tui.WithText("Plugins/Mods"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_58.AddChild(__tui_67)
-			}
-			__tui_56.AddChild(__tui_58)
-			if len(a.fmItems()) == 0 {
-				__tui_68 := tui.New(
-					tui.WithText("(empty)"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_56.AddChild(__tui_68)
-			}
-			__tui_69 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithFlexGrow(1),
-				tui.WithScrollable(tui.ScrollVertical),
-				tui.WithScrollOffset(0, a.fmScrollY()),
-			)
-			for __idx_0, item := range a.fmItems() {
-				_ = __idx_0
-				if item.Sel {
-					__tui_70 := tui.New(
-						tui.WithText(fmt.Sprintf("> %s", item.Text)),
-						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
-					)
-					__tui_69.AddChild(__tui_70)
-				} else {
-					__tui_71 := tui.New(
-						tui.WithText(fmt.Sprintf("  %s", item.Text)),
-					)
-					__tui_69.AddChild(__tui_71)
-				}
-			}
-			__tui_56.AddChild(__tui_69)
-			if a.fmEditing.Get() {
-				__tui_72 := tui.New(
-					tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-					tui.WithGap(1),
-				)
-				__tui_73 := tui.New(
-					tui.WithText(fmt.Sprintf("%s =", a.fmSelectedKey())),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_72.AddChild(__tui_73)
-				__tui_74 := tui.New(
-					tui.WithText(a.fmEditText.Get()),
-				)
-				__tui_72.AddChild(__tui_74)
-				__tui_75 := tui.New(
-					tui.WithText("_"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
-				)
-				__tui_72.AddChild(__tui_75)
-				__tui_76 := tui.New(
-					tui.WithText("(Enter applies | Esc cancels)"),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_72.AddChild(__tui_76)
-				__tui_56.AddChild(__tui_72)
-			}
-			if a.fmConfirm.Get() != "" {
-				__tui_77 := tui.New(
-					tui.WithText(fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
-				)
-				__tui_56.AddChild(__tui_77)
-			}
-			if a.fmMsg.Get() != "" {
-				__tui_78 := tui.New(
-					tui.WithText(a.fmMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
-				)
-				__tui_56.AddChild(__tui_78)
-			}
-			__tui_79 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			for i, h := range a.fmHints() {
-				_ = i
-				if i > 0 {
-					__tui_80 := tui.New(
-						tui.WithText("|"),
-						tui.WithTextStyle(tui.NewStyle().Dim()),
-					)
-					__tui_79.AddChild(__tui_80)
-				}
-				__tui_81 := tui.New(
-					tui.WithText(h.K),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_79.AddChild(__tui_81)
-				__tui_82 := tui.New(
-					tui.WithText(h.L),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_79.AddChild(__tui_82)
-			}
-			__tui_56.AddChild(__tui_79)
-			__tui_17.AddChild(__tui_56)
+			__tui_9 := app.Mount(a, 2, func() tui.Component {
+				return FilesView(a)
+			})
+			__tui_6.AddChild(__tui_9)
 		} else if a.mrOpen.Get() {
-			__tui_83 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithBorder(tui.BorderRounded),
-				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Green)),
-				tui.WithPadding(1),
-				tui.WithFlexGrow(1),
-			)
-			__tui_84 := tui.New(
-				tui.WithText(fmt.Sprintf("Modrinth — %s", a.currentName())),
-				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
-			)
-			__tui_83.AddChild(__tui_84)
-			__tui_85 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			__tui_86 := tui.New(
-				tui.WithText("Search:"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
-			)
-			__tui_85.AddChild(__tui_86)
-			__tui_87 := tui.New(
-				tui.WithText(a.mrQuery.Get()),
-			)
-			__tui_85.AddChild(__tui_87)
-			if a.mrTyping.Get() {
-				__tui_88 := tui.New(
-					tui.WithText("_"),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Blink()),
-				)
-				__tui_85.AddChild(__tui_88)
-			}
-			__tui_83.AddChild(__tui_85)
-			__tui_89 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithFlexGrow(1),
-				tui.WithScrollable(tui.ScrollVertical),
-				tui.WithScrollOffset(0, scrollTo(a.mrIdx.Get())),
-			)
-			for __idx_0, item := range a.mrItems() {
-				_ = __idx_0
-				if item.Sel {
-					__tui_90 := tui.New(
-						tui.WithText(fmt.Sprintf("> %s", item.Text)),
-						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
-					)
-					__tui_89.AddChild(__tui_90)
-				} else {
-					__tui_91 := tui.New(
-						tui.WithText(fmt.Sprintf("  %s", item.Text)),
-					)
-					__tui_89.AddChild(__tui_91)
-				}
-			}
-			__tui_83.AddChild(__tui_89)
-			if a.mrMsg.Get() != "" {
-				__tui_92 := tui.New(
-					tui.WithText(a.mrMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
-				)
-				__tui_83.AddChild(__tui_92)
-			}
-			__tui_93 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			for i, h := range a.mrHints() {
-				_ = i
-				if i > 0 {
-					__tui_94 := tui.New(
-						tui.WithText("|"),
-						tui.WithTextStyle(tui.NewStyle().Dim()),
-					)
-					__tui_93.AddChild(__tui_94)
-				}
-				__tui_95 := tui.New(
-					tui.WithText(h.K),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
-				)
-				__tui_93.AddChild(__tui_95)
-				__tui_96 := tui.New(
-					tui.WithText(h.L),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_93.AddChild(__tui_96)
-			}
-			__tui_83.AddChild(__tui_93)
-			__tui_17.AddChild(__tui_83)
+			__tui_10 := app.Mount(a, 3, func() tui.Component {
+				return ModrinthView(a)
+			})
+			__tui_6.AddChild(__tui_10)
 		} else {
-			__tui_97 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-				tui.WithBorder(tui.BorderRounded),
-				tui.WithPadding(1),
-				tui.WithFlexGrow(1),
-				tui.WithScrollable(tui.ScrollVertical),
-				tui.WithScrollOffset(0, math.MaxInt),
-			)
-			__tui_98 := tui.New(
-				tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
-				tui.WithFlexShrink(0),
-				tui.WithTextStyle(tui.NewStyle().Bold()),
-			)
-			__tui_97.AddChild(__tui_98)
-			for __idx_0, line := range a.currentLogs() {
-				_ = __idx_0
-				__tui_99 := tui.New(
-					tui.WithText(line),
-				)
-				__tui_97.AddChild(__tui_99)
-			}
-			__tui_17.AddChild(__tui_97)
+			__tui_11 := ConsoleView(a)
+			__tui_6.AddChild(__tui_11.Root)
 		}
-		__tui_13.AddChild(__tui_17)
-		if a.cmdActive.Get() {
-			__tui_100 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-				tui.WithPaddingTRBL(0, 1, 0, 1),
-			)
-			__tui_101 := tui.New(
-				tui.WithText(fmt.Sprintf("%s >", a.currentName())),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_100.AddChild(__tui_101)
-			__tui_102 := tui.New(
-				tui.WithText(a.cmdText.Get()),
-			)
-			__tui_100.AddChild(__tui_102)
-			__tui_103 := tui.New(
-				tui.WithText("_"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
-			)
-			__tui_100.AddChild(__tui_103)
-			__tui_104 := tui.New(
-				tui.WithText("Enter"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_100.AddChild(__tui_104)
-			__tui_105 := tui.New(
-				tui.WithText("sends"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_100.AddChild(__tui_105)
-			__tui_106 := tui.New(
-				tui.WithText("|"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_100.AddChild(__tui_106)
-			__tui_107 := tui.New(
-				tui.WithText("Esc"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_100.AddChild(__tui_107)
-			__tui_108 := tui.New(
-				tui.WithText("closes"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_100.AddChild(__tui_108)
-			__tui_13.AddChild(__tui_100)
-		} else if a.renActive.Get() {
-			__tui_109 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-				tui.WithPaddingTRBL(0, 1, 0, 1),
-			)
-			__tui_110 := tui.New(
-				tui.WithText(fmt.Sprintf("Rename %s to:", a.currentName())),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_109.AddChild(__tui_110)
-			__tui_111 := tui.New(
-				tui.WithText(a.renText.Get()),
-			)
-			__tui_109.AddChild(__tui_111)
-			__tui_112 := tui.New(
-				tui.WithText("_"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
-			)
-			__tui_109.AddChild(__tui_112)
-			if a.renMsg.Get() != "" {
-				__tui_113 := tui.New(
-					tui.WithText(a.renMsg.Get()),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
-				)
-				__tui_109.AddChild(__tui_113)
-			}
-			__tui_114 := tui.New(
-				tui.WithText("Enter"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_109.AddChild(__tui_114)
-			__tui_115 := tui.New(
-				tui.WithText("applies"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_109.AddChild(__tui_115)
-			__tui_116 := tui.New(
-				tui.WithText("|"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_109.AddChild(__tui_116)
-			__tui_117 := tui.New(
-				tui.WithText("Esc"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-			)
-			__tui_109.AddChild(__tui_117)
-			__tui_118 := tui.New(
-				tui.WithText("cancels"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_109.AddChild(__tui_118)
-			__tui_13.AddChild(__tui_109)
-		} else if a.delTarget.Get() != "" {
-			__tui_119 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-				tui.WithPaddingTRBL(0, 1, 0, 1),
-			)
-			__tui_120 := tui.New(
-				tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
-			)
-			__tui_119.AddChild(__tui_120)
-			__tui_121 := tui.New(
-				tui.WithText("y"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
-			)
-			__tui_119.AddChild(__tui_121)
-			__tui_122 := tui.New(
-				tui.WithText("delete"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_119.AddChild(__tui_122)
-			__tui_123 := tui.New(
-				tui.WithText("|"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_119.AddChild(__tui_123)
-			__tui_124 := tui.New(
-				tui.WithText("n/Esc"),
-				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
-			)
-			__tui_119.AddChild(__tui_124)
-			__tui_125 := tui.New(
-				tui.WithText("keep"),
-				tui.WithTextStyle(tui.NewStyle().Dim()),
-			)
-			__tui_119.AddChild(__tui_125)
-			__tui_13.AddChild(__tui_119)
-		} else {
-			__tui_126 := tui.New(
-				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
-				tui.WithGap(1),
-				tui.WithFlexShrink(0),
-			)
-			for i, h := range a.mainHints() {
-				_ = i
-				if i > 0 {
-					__tui_127 := tui.New(
-						tui.WithText("|"),
-						tui.WithTextStyle(tui.NewStyle().Dim()),
-					)
-					__tui_126.AddChild(__tui_127)
-				}
-				__tui_128 := tui.New(
-					tui.WithText(h.K),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-				)
-				__tui_126.AddChild(__tui_128)
-				__tui_129 := tui.New(
-					tui.WithText(h.L),
-					tui.WithTextStyle(tui.NewStyle().Dim()),
-				)
-				__tui_126.AddChild(__tui_129)
-			}
-			__tui_13.AddChild(__tui_126)
-		}
+		__tui_2.AddChild(__tui_6)
+		__tui_12 := FooterBar(a)
+		__tui_2.AddChild(__tui_12.Root)
 		if __tui_0 == nil {
-			__tui_0 = __tui_13
+			__tui_0 = __tui_2
 		}
 	}
 
 	return __tui_0
 }
-
-// updatePropsFields is generated. It copies prop fields from fresh onto
-// the receiver. When you override UpdateProps, call this helper instead
-// of hand-maintaining the copy list.
-func (a *app) updatePropsFields(fresh tui.Component) {
-	f, ok := fresh.(*app)
-	if !ok {
-		return
-	}
-	a.store = f.store
-	a.dataDir = f.dataDir
-	a.splashTicks = f.splashTicks
-	a.collector = f.collector
-	a.lastPIDs = f.lastPIDs
-	a.fmProps = f.fmProps
-	a.mr = f.mr
-}
-
-func (a *app) UpdateProps(fresh tui.Component) {
-	a.updatePropsFields(fresh)
-}
-
-var _ tui.PropsUpdater = (*app)(nil)
-
-// bindAppFields is generated. It wires the component's *tui.App,
-// State, Events, and TextArea fields to app. When you override BindApp,
-// call this helper instead of hand-maintaining the delegation list.
-func (a *app) bindAppFields(app *tui.App) {
-	if a.managers != nil {
-		a.managers.BindApp(app)
-	}
-	if a.splash != nil {
-		a.splash.BindApp(app)
-	}
-	if a.selected != nil {
-		a.selected.BindApp(app)
-	}
-	if a.statuses != nil {
-		a.statuses.BindApp(app)
-	}
-	if a.logs != nil {
-		a.logs.BindApp(app)
-	}
-	if a.cmdActive != nil {
-		a.cmdActive.BindApp(app)
-	}
-	if a.cmdText != nil {
-		a.cmdText.BindApp(app)
-	}
-	if a.renActive != nil {
-		a.renActive.BindApp(app)
-	}
-	if a.renText != nil {
-		a.renText.BindApp(app)
-	}
-	if a.renMsg != nil {
-		a.renMsg.BindApp(app)
-	}
-	if a.delTarget != nil {
-		a.delTarget.BindApp(app)
-	}
-	if a.samples != nil {
-		a.samples.BindApp(app)
-	}
-	if a.wizStep != nil {
-		a.wizStep.BindApp(app)
-	}
-	if a.wizGen != nil {
-		a.wizGen.BindApp(app)
-	}
-	if a.wizTypeIdx != nil {
-		a.wizTypeIdx.BindApp(app)
-	}
-	if a.wizVersions != nil {
-		a.wizVersions.BindApp(app)
-	}
-	if a.wizVerIdx != nil {
-		a.wizVerIdx.BindApp(app)
-	}
-	if a.wizName != nil {
-		a.wizName.BindApp(app)
-	}
-	if a.wizMemory != nil {
-		a.wizMemory.BindApp(app)
-	}
-	if a.wizMsg != nil {
-		a.wizMsg.BindApp(app)
-	}
-	if a.fmOpen != nil {
-		a.fmOpen.BindApp(app)
-	}
-	if a.fmTab != nil {
-		a.fmTab.BindApp(app)
-	}
-	if a.fmRev != nil {
-		a.fmRev.BindApp(app)
-	}
-	if a.fmPropsIdx != nil {
-		a.fmPropsIdx.BindApp(app)
-	}
-	if a.fmEditing != nil {
-		a.fmEditing.BindApp(app)
-	}
-	if a.fmEditText != nil {
-		a.fmEditText.BindApp(app)
-	}
-	if a.fmDirty != nil {
-		a.fmDirty.BindApp(app)
-	}
-	if a.fmWorlds != nil {
-		a.fmWorlds.BindApp(app)
-	}
-	if a.fmPlugins != nil {
-		a.fmPlugins.BindApp(app)
-	}
-	if a.fmWorldIdx != nil {
-		a.fmWorldIdx.BindApp(app)
-	}
-	if a.fmPluginIdx != nil {
-		a.fmPluginIdx.BindApp(app)
-	}
-	if a.fmConfirm != nil {
-		a.fmConfirm.BindApp(app)
-	}
-	if a.fmMsg != nil {
-		a.fmMsg.BindApp(app)
-	}
-	if a.mrOpen != nil {
-		a.mrOpen.BindApp(app)
-	}
-	if a.mrTyping != nil {
-		a.mrTyping.BindApp(app)
-	}
-	if a.mrQuery != nil {
-		a.mrQuery.BindApp(app)
-	}
-	if a.mrResults != nil {
-		a.mrResults.BindApp(app)
-	}
-	if a.mrIdx != nil {
-		a.mrIdx.BindApp(app)
-	}
-	if a.mrBusy != nil {
-		a.mrBusy.BindApp(app)
-	}
-	if a.mrGen != nil {
-		a.mrGen.BindApp(app)
-	}
-	if a.mrMsg != nil {
-		a.mrMsg.BindApp(app)
-	}
-}
-
-func (a *app) BindApp(app *tui.App) {
-	a.bindAppFields(app)
-}
-
-var _ tui.AppBinder = (*app)(nil)
-
-// Compile-time interface satisfaction checks.
-var (
-	_ tui.KeyListener     = (*app)(nil)
-	_ tui.WatcherProvider = (*app)(nil)
-)
