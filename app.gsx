@@ -8,6 +8,7 @@ import (
 	"mc-tui-server/internal/config"
 	"mc-tui-server/internal/download"
 	"mc-tui-server/internal/metrics"
+	"mc-tui-server/internal/modrinth"
 	"mc-tui-server/internal/properties"
 	"mc-tui-server/internal/server"
 	"os"
@@ -141,6 +142,18 @@ type app struct {
 	fmPluginIdx *tui.State[int]
 	fmConfirm   *tui.State[string]
 	fmMsg       *tui.State[string]
+
+	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
+	// cerrado, igual que wizGen.
+	mr        *modrinth.Client
+	mrOpen    *tui.State[bool]
+	mrTyping  *tui.State[bool]
+	mrQuery   *tui.State[string]
+	mrResults *tui.State[[]modrinth.Project]
+	mrIdx     *tui.State[int]
+	mrBusy    *tui.State[bool]
+	mrGen     *tui.State[int]
+	mrMsg     *tui.State[string]
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -188,6 +201,16 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmPluginIdx: tui.NewState(0),
 		fmConfirm:   tui.NewState(""),
 		fmMsg:       tui.NewState(""),
+
+		mr:        &modrinth.Client{},
+		mrOpen:    tui.NewState(false),
+		mrTyping:  tui.NewState(false),
+		mrQuery:   tui.NewState(""),
+		mrResults: tui.NewState([]modrinth.Project{}),
+		mrIdx:     tui.NewState(0),
+		mrBusy:    tui.NewState(false),
+		mrGen:     tui.NewState(0),
+		mrMsg:     tui.NewState(""),
 	}
 	for _, m := range managers {
 		a.pumpLogs(m)
@@ -924,6 +947,182 @@ func (a *app) fmKeyMap() tui.KeyMap {
 	}
 }
 
+// --- Buscador de Modrinth (R6) -----------------------------------------------
+func (a *app) mrOpenPanel() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	inst := mgr.Instance()
+	if _, ok := assets.PluginsDir(inst.Type); !ok {
+		a.appendLog(inst.Name, "[mc-tui] vanilla servers do not support plugins/mods")
+		return
+	}
+	a.mrGen.Update(func(g int) int { return g + 1 })
+	a.mrQuery.Set("")
+	a.mrResults.Set([]modrinth.Project{})
+	a.mrIdx.Set(0)
+	a.mrBusy.Set(false)
+	a.mrMsg.Set("")
+	a.mrTyping.Set(true)
+	a.mrOpen.Set(true)
+}
+
+func (a *app) mrClose() {
+	a.mrGen.Update(func(g int) int { return g + 1 })
+	a.mrOpen.Set(false)
+}
+
+func (a *app) mrSearch() {
+	mgr := a.current()
+	query := a.mrQuery.Get()
+	if mgr == nil || query == "" || a.mrBusy.Get() {
+		return
+	}
+	inst := mgr.Instance()
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set("Searching Modrinth...")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		results, err := a.mr.Search(ctx, query, inst.Type, inst.Version)
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		a.mrResults.Set(results)
+		a.mrIdx.Set(0)
+		a.mrTyping.Set(false)
+		if len(results) == 0 {
+			a.mrMsg.Set(fmt.Sprintf("No results for %q compatible with %s %s", query, inst.Type, inst.Version))
+			return
+		}
+		a.mrMsg.Set(fmt.Sprintf("%d results · Enter installs into the selected instance", len(results)))
+	}()
+}
+
+func (a *app) mrInstall() {
+	mgr := a.current()
+	results := a.mrResults.Get()
+	idx := a.mrIdx.Get()
+	if mgr == nil || a.mrBusy.Get() || idx < 0 || idx >= len(results) {
+		return
+	}
+	inst := mgr.Instance()
+	project := results[idx]
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Resolving %s...", project.Title))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		file, err := a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
+		if err == nil {
+			dest := filepath.Join(inst.Dir, sub, file.Filename)
+			err = download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
+				if a.mrGen.Get() != gen {
+					return
+				}
+				if total > 0 {
+					a.mrMsg.Set(fmt.Sprintf("Downloading %s... %d%%", file.Filename, done*100/total))
+				}
+			})
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, file.Filename))
+	}()
+}
+
+// mrDownloadsText formatea el contador de descargas (9000 → 9.0k).
+func mrDownloadsText(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
+	}
+}
+
+func (a *app) mrItems() []wizItem {
+	results := a.mrResults.Get()
+	lines := make([]string, len(results))
+	for i, p := range results {
+		desc := p.Description
+		if r := []rune(desc); len(r) > 50 {
+			desc = string(r[:50]) + "…"
+		}
+		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+	}
+	return windowItems(lines, a.mrIdx.Get(), 14)
+}
+
+func (a *app) mrMove(delta int) {
+	n := len(a.mrResults.Get())
+	if n == 0 {
+		return
+	}
+	a.mrIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return i
+	})
+}
+
+func (a *app) mrKeyMap() tui.KeyMap {
+	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
+	if a.mrTyping.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				a.mrQuery.Update(func(s string) string { return s + string(ke.Rune) })
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.mrQuery.Update(func(s string) string {
+					r := []rune(s)
+					if len(r) == 0 {
+						return s
+					}
+					return string(r[:len(r)-1])
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrSearch() }),
+			esc,
+		}
+	}
+	return tui.KeyMap{
+		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.mrMove(-1) }),
+		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.mrMove(1) }),
+		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.mrMove(-10) }),
+		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMove(10) }),
+		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
+		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
+		esc,
+	}
+}
+
 func (a *app) KeyMap() tui.KeyMap {
 	if a.splash.Get() {
 		dismiss := func(ke tui.KeyEvent) { a.splash.Set(false) }
@@ -939,6 +1138,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.fmOpen.Get() {
 		return a.fmKeyMap()
 	}
+	if a.mrOpen.Get() {
+		return a.mrKeyMap()
+	}
 	if a.cmdActive.Get() {
 		return tui.KeyMap{
 			tui.OnStop(tui.AnyRune, a.appendCmdChar),
@@ -953,6 +1155,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
+		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -1162,6 +1365,32 @@ templ (a *app) Render() {
 						}
 						<span class="font-dim shrink-0">{a.fmHelp()}</span>
 					</div>
+				} else if a.mrOpen.Get() {
+					<div class="flex-col border-rounded border-green p-1 flex-grow">
+						<span class="font-bold text-green shrink-0">{fmt.Sprintf("Modrinth — %s", a.currentName())}</span>
+						<div class="flex gap-1 shrink-0">
+							<span class="text-green font-bold">Search:</span>
+							<span>{a.mrQuery.Get()}</span>
+							if a.mrTyping.Get() {
+								<span class="text-green blink">_</span>
+							}
+						</div>
+						for _, item := range a.mrItems() {
+							if item.Sel {
+								<span class="font-bold text-green">{fmt.Sprintf("> %s", item.Text)}</span>
+							} else {
+								<span>{fmt.Sprintf("  %s", item.Text)}</span>
+							}
+						}
+						if a.mrMsg.Get() != "" {
+							<span class="text-yellow">{a.mrMsg.Get()}</span>
+						}
+						if a.mrTyping.Get() {
+							<span class="font-dim shrink-0">your search | Enter search | Esc close</span>
+						} else {
+							<span class="font-dim shrink-0">↑/↓ select | Enter install | / new search | Esc close</span>
+						}
+					</div>
 				} else {
 					<div
 						class="flex-col border-rounded p-1 flex-grow"
@@ -1183,7 +1412,7 @@ templ (a *app) Render() {
 					<span class="font-dim">(Enter sends | Esc closes)</span>
 				</div>
 			} else {
-				<span class="font-dim shrink-0">↑/↓ select | s start | x stop | r restart | c/Enter command | e files | n new | q quit</span>
+				<span class="font-dim shrink-0">↑/↓ select | s start | x stop | r restart | c/Enter command | e files | m modrinth | n new | q quit</span>
 			}
 		</div>
 	}

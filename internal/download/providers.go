@@ -40,7 +40,7 @@ type vanillaManifest struct {
 func (v *Vanilla) manifest(ctx context.Context) (vanillaManifest, error) {
 	var m vanillaManifest
 	url := base(v.BaseURL, defaultVanillaBase) + "/mc/game/version_manifest_v2.json"
-	if err := getJSON(ctx, v.Client, url, &m); err != nil {
+	if err := GetJSON(ctx, v.Client, url, &m); err != nil {
 		return m, err
 	}
 	return m, nil
@@ -77,7 +77,7 @@ func (v *Vanilla) ResolveJarURL(ctx context.Context, version string) (string, er
 				} `json:"server"`
 			} `json:"downloads"`
 		}
-		if err := getJSON(ctx, v.Client, ver.URL, &detail); err != nil {
+		if err := GetJSON(ctx, v.Client, ver.URL, &detail); err != nil {
 			return "", err
 		}
 		if detail.Downloads.Server.URL == "" {
@@ -104,7 +104,7 @@ func (p *Paper) Versions(ctx context.Context) ([]string, error) {
 		Versions []string `json:"versions"`
 	}
 	url := base(p.BaseURL, defaultPaperBase) + "/v2/projects/paper"
-	if err := getJSON(ctx, p.Client, url, &project); err != nil {
+	if err := GetJSON(ctx, p.Client, url, &project); err != nil {
 		return nil, err
 	}
 	out := make([]string, len(project.Versions))
@@ -128,7 +128,7 @@ func (p *Paper) ResolveJarURL(ctx context.Context, version string) (string, erro
 	}
 	baseURL := base(p.BaseURL, defaultPaperBase)
 	url := fmt.Sprintf("%s/v2/projects/paper/versions/%s/builds", baseURL, version)
-	if err := getJSON(ctx, p.Client, url, &builds); err != nil {
+	if err := GetJSON(ctx, p.Client, url, &builds); err != nil {
 		return "", err
 	}
 	if len(builds.Builds) == 0 {
@@ -162,7 +162,7 @@ func (p *Purpur) Versions(ctx context.Context) ([]string, error) {
 		Versions []string `json:"versions"`
 	}
 	url := base(p.BaseURL, defaultPurpurBase) + "/v2/purpur"
-	if err := getJSON(ctx, p.Client, url, &project); err != nil {
+	if err := GetJSON(ctx, p.Client, url, &project); err != nil {
 		return nil, err
 	}
 	out := make([]string, len(project.Versions))
@@ -193,7 +193,7 @@ type fabricEntry struct {
 func (f *Fabric) stableVersions(ctx context.Context, endpoint string) ([]string, error) {
 	var entries []fabricEntry
 	url := base(f.BaseURL, defaultFabricBase) + endpoint
-	if err := getJSON(ctx, f.Client, url, &entries); err != nil {
+	if err := GetJSON(ctx, f.Client, url, &entries); err != nil {
 		return nil, err
 	}
 	var out []string

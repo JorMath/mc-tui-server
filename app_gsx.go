@@ -11,6 +11,7 @@ import (
 	"mc-tui-server/internal/config"
 	"mc-tui-server/internal/download"
 	"mc-tui-server/internal/metrics"
+	"mc-tui-server/internal/modrinth"
 	"mc-tui-server/internal/properties"
 	"mc-tui-server/internal/server"
 	"os"
@@ -120,6 +121,18 @@ type app struct {
 	fmPluginIdx *tui.State[int]
 	fmConfirm   *tui.State[string]
 	fmMsg       *tui.State[string]
+
+	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
+	// cerrado, igual que wizGen.
+	mr        *modrinth.Client
+	mrOpen    *tui.State[bool]
+	mrTyping  *tui.State[bool]
+	mrQuery   *tui.State[string]
+	mrResults *tui.State[[]modrinth.Project]
+	mrIdx     *tui.State[int]
+	mrBusy    *tui.State[bool]
+	mrGen     *tui.State[int]
+	mrMsg     *tui.State[string]
 }
 
 type wizItem struct {
@@ -191,6 +204,16 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmPluginIdx: tui.NewState(0),
 		fmConfirm:   tui.NewState(""),
 		fmMsg:       tui.NewState(""),
+
+		mr:        &modrinth.Client{},
+		mrOpen:    tui.NewState(false),
+		mrTyping:  tui.NewState(false),
+		mrQuery:   tui.NewState(""),
+		mrResults: tui.NewState([]modrinth.Project{}),
+		mrIdx:     tui.NewState(0),
+		mrBusy:    tui.NewState(false),
+		mrGen:     tui.NewState(0),
+		mrMsg:     tui.NewState(""),
 	}
 	for _, m := range managers {
 		a.pumpLogs(m)
@@ -910,6 +933,180 @@ func (a *app) fmKeyMap() tui.KeyMap {
 	}
 }
 
+func (a *app) mrOpenPanel() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	inst := mgr.Instance()
+	if _, ok := assets.PluginsDir(inst.Type); !ok {
+		a.appendLog(inst.Name, "[mc-tui] vanilla servers do not support plugins/mods")
+		return
+	}
+	a.mrGen.Update(func(g int) int { return g + 1 })
+	a.mrQuery.Set("")
+	a.mrResults.Set([]modrinth.Project{})
+	a.mrIdx.Set(0)
+	a.mrBusy.Set(false)
+	a.mrMsg.Set("")
+	a.mrTyping.Set(true)
+	a.mrOpen.Set(true)
+}
+
+func (a *app) mrClose() {
+	a.mrGen.Update(func(g int) int { return g + 1 })
+	a.mrOpen.Set(false)
+}
+
+func (a *app) mrSearch() {
+	mgr := a.current()
+	query := a.mrQuery.Get()
+	if mgr == nil || query == "" || a.mrBusy.Get() {
+		return
+	}
+	inst := mgr.Instance()
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set("Searching Modrinth...")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		results, err := a.mr.Search(ctx, query, inst.Type, inst.Version)
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		a.mrResults.Set(results)
+		a.mrIdx.Set(0)
+		a.mrTyping.Set(false)
+		if len(results) == 0 {
+			a.mrMsg.Set(fmt.Sprintf("No results for %q compatible with %s %s", query, inst.Type, inst.Version))
+			return
+		}
+		a.mrMsg.Set(fmt.Sprintf("%d results · Enter installs into the selected instance", len(results)))
+	}()
+}
+
+func (a *app) mrInstall() {
+	mgr := a.current()
+	results := a.mrResults.Get()
+	idx := a.mrIdx.Get()
+	if mgr == nil || a.mrBusy.Get() || idx < 0 || idx >= len(results) {
+		return
+	}
+	inst := mgr.Instance()
+	project := results[idx]
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Resolving %s...", project.Title))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		file, err := a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
+		if err == nil {
+			dest := filepath.Join(inst.Dir, sub, file.Filename)
+			err = download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
+				if a.mrGen.Get() != gen {
+					return
+				}
+				if total > 0 {
+					a.mrMsg.Set(fmt.Sprintf("Downloading %s... %d%%", file.Filename, done*100/total))
+				}
+			})
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, file.Filename))
+	}()
+}
+
+func mrDownloadsText(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1_000:
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	default:
+		return strconv.Itoa(n)
+	}
+}
+
+func (a *app) mrItems() []wizItem {
+	results := a.mrResults.Get()
+	lines := make([]string, len(results))
+	for i, p := range results {
+		desc := p.Description
+		if r := []rune(desc); len(r) > 50 {
+			desc = string(r[:50]) + "…"
+		}
+		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+	}
+	return windowItems(lines, a.mrIdx.Get(), 14)
+}
+
+func (a *app) mrMove(delta int) {
+	n := len(a.mrResults.Get())
+	if n == 0 {
+		return
+	}
+	a.mrIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return i
+	})
+}
+
+func (a *app) mrKeyMap() tui.KeyMap {
+	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
+	if a.mrTyping.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				a.mrQuery.Update(func(s string) string { return s + string(ke.Rune) })
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.mrQuery.Update(func(s string) string {
+					r := []rune(s)
+					if len(r) == 0 {
+						return s
+					}
+					return string(r[:len(r)-1])
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrSearch() }),
+			esc,
+		}
+	}
+	return tui.KeyMap{
+		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.mrMove(-1) }),
+		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.mrMove(1) }),
+		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.mrMove(-10) }),
+		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMove(10) }),
+		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
+		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
+		esc,
+	}
+}
+
 func (a *app) KeyMap() tui.KeyMap {
 	if a.splash.Get() {
 		dismiss := func(ke tui.KeyEvent) { a.splash.Set(false) }
@@ -925,6 +1122,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.fmOpen.Get() {
 		return a.fmKeyMap()
 	}
+	if a.mrOpen.Get() {
+		return a.mrKeyMap()
+	}
 	if a.cmdActive.Get() {
 		return tui.KeyMap{
 			tui.OnStop(tui.AnyRune, a.appendCmdChar),
@@ -939,6 +1139,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
+		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -1397,8 +1598,82 @@ func (a *app) Render(app *tui.App) *tui.Element {
 			)
 			__tui_48.AddChild(__tui_61)
 			__tui_11.AddChild(__tui_48)
-		} else {
+		} else if a.mrOpen.Get() {
 			__tui_62 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+				tui.WithBorder(tui.BorderRounded),
+				tui.WithBorderStyle(tui.NewStyle().Foreground(tui.Green)),
+				tui.WithPadding(1),
+				tui.WithFlexGrow(1),
+			)
+			__tui_63 := tui.New(
+				tui.WithText(fmt.Sprintf("Modrinth — %s", a.currentName())),
+				tui.WithFlexShrink(0),
+				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
+			)
+			__tui_62.AddChild(__tui_63)
+			__tui_64 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+				tui.WithFlexShrink(0),
+			)
+			__tui_65 := tui.New(
+				tui.WithText("Search:"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
+			)
+			__tui_64.AddChild(__tui_65)
+			__tui_66 := tui.New(
+				tui.WithText(a.mrQuery.Get()),
+			)
+			__tui_64.AddChild(__tui_66)
+			if a.mrTyping.Get() {
+				__tui_67 := tui.New(
+					tui.WithText("_"),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Blink()),
+				)
+				__tui_64.AddChild(__tui_67)
+			}
+			__tui_62.AddChild(__tui_64)
+			for __idx_0, item := range a.mrItems() {
+				_ = __idx_0
+				if item.Sel {
+					__tui_68 := tui.New(
+						tui.WithText(fmt.Sprintf("> %s", item.Text)),
+						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
+					)
+					__tui_62.AddChild(__tui_68)
+				} else {
+					__tui_69 := tui.New(
+						tui.WithText(fmt.Sprintf("  %s", item.Text)),
+					)
+					__tui_62.AddChild(__tui_69)
+				}
+			}
+			if a.mrMsg.Get() != "" {
+				__tui_70 := tui.New(
+					tui.WithText(a.mrMsg.Get()),
+					tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
+				)
+				__tui_62.AddChild(__tui_70)
+			}
+			if a.mrTyping.Get() {
+				__tui_71 := tui.New(
+					tui.WithText("your search | Enter search | Esc close"),
+					tui.WithFlexShrink(0),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_62.AddChild(__tui_71)
+			} else {
+				__tui_72 := tui.New(
+					tui.WithText("↑/↓ select | Enter install | / new search | Esc close"),
+					tui.WithFlexShrink(0),
+					tui.WithTextStyle(tui.NewStyle().Dim()),
+				)
+				__tui_62.AddChild(__tui_72)
+			}
+			__tui_11.AddChild(__tui_62)
+		} else {
+			__tui_73 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 				tui.WithBorder(tui.BorderRounded),
 				tui.WithPadding(1),
@@ -1406,56 +1681,56 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				tui.WithScrollable(tui.ScrollVertical),
 				tui.WithScrollOffset(0, math.MaxInt),
 			)
-			__tui_63 := tui.New(
+			__tui_74 := tui.New(
 				tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Bold()),
 			)
-			__tui_62.AddChild(__tui_63)
+			__tui_73.AddChild(__tui_74)
 			for __idx_0, line := range a.currentLogs() {
 				_ = __idx_0
-				__tui_64 := tui.New(
+				__tui_75 := tui.New(
 					tui.WithText(line),
 				)
-				__tui_62.AddChild(__tui_64)
+				__tui_73.AddChild(__tui_75)
 			}
-			__tui_11.AddChild(__tui_62)
+			__tui_11.AddChild(__tui_73)
 		}
 		__tui_7.AddChild(__tui_11)
 		if a.cmdActive.Get() {
-			__tui_65 := tui.New(
+			__tui_76 := tui.New(
 				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 				tui.WithGap(1),
 				tui.WithFlexShrink(0),
 				tui.WithPaddingTRBL(0, 1, 0, 1),
 			)
-			__tui_66 := tui.New(
+			__tui_77 := tui.New(
 				tui.WithText(fmt.Sprintf("%s >", a.currentName())),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 			)
-			__tui_65.AddChild(__tui_66)
-			__tui_67 := tui.New(
+			__tui_76.AddChild(__tui_77)
+			__tui_78 := tui.New(
 				tui.WithText(a.cmdText.Get()),
 			)
-			__tui_65.AddChild(__tui_67)
-			__tui_68 := tui.New(
+			__tui_76.AddChild(__tui_78)
+			__tui_79 := tui.New(
 				tui.WithText("_"),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 			)
-			__tui_65.AddChild(__tui_68)
-			__tui_69 := tui.New(
+			__tui_76.AddChild(__tui_79)
+			__tui_80 := tui.New(
 				tui.WithText("(Enter sends | Esc closes)"),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_65.AddChild(__tui_69)
-			__tui_7.AddChild(__tui_65)
+			__tui_76.AddChild(__tui_80)
+			__tui_7.AddChild(__tui_76)
 		} else {
-			__tui_70 := tui.New(
-				tui.WithText("↑/↓ select | s start | x stop | r restart | c/Enter command | e files | n new | q quit"),
+			__tui_81 := tui.New(
+				tui.WithText("↑/↓ select | s start | x stop | r restart | c/Enter command | e files | m modrinth | n new | q quit"),
 				tui.WithFlexShrink(0),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_7.AddChild(__tui_70)
+			__tui_7.AddChild(__tui_81)
 		}
 		if __tui_0 == nil {
 			__tui_0 = __tui_7
@@ -1479,6 +1754,7 @@ func (a *app) updatePropsFields(fresh tui.Component) {
 	a.collector = f.collector
 	a.lastPIDs = f.lastPIDs
 	a.fmProps = f.fmProps
+	a.mr = f.mr
 }
 
 func (a *app) UpdateProps(fresh tui.Component) {
@@ -1577,6 +1853,30 @@ func (a *app) bindAppFields(app *tui.App) {
 	}
 	if a.fmMsg != nil {
 		a.fmMsg.BindApp(app)
+	}
+	if a.mrOpen != nil {
+		a.mrOpen.BindApp(app)
+	}
+	if a.mrTyping != nil {
+		a.mrTyping.BindApp(app)
+	}
+	if a.mrQuery != nil {
+		a.mrQuery.BindApp(app)
+	}
+	if a.mrResults != nil {
+		a.mrResults.BindApp(app)
+	}
+	if a.mrIdx != nil {
+		a.mrIdx.BindApp(app)
+	}
+	if a.mrBusy != nil {
+		a.mrBusy.BindApp(app)
+	}
+	if a.mrGen != nil {
+		a.mrGen.BindApp(app)
+	}
+	if a.mrMsg != nil {
+		a.mrMsg.BindApp(app)
 	}
 }
 

@@ -31,8 +31,8 @@ func TestForUnknownTypeFails(t *testing.T) {
 
 func TestGetJSONInvalidURLFails(t *testing.T) {
 	var v any
-	if err := getJSON(context.Background(), nil, "http://\x00invalido", &v); err == nil {
-		t.Fatal("getJSON con URL inválida debe fallar")
+	if err := GetJSON(context.Background(), nil, "http://\x00invalido", &v); err == nil {
+		t.Fatal("GetJSON con URL inválida debe fallar")
 	}
 }
 
@@ -40,8 +40,8 @@ func TestGetJSONConnectionErrorFails(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close() // servidor ya cerrado: client.Do falla
 	var v any
-	if err := getJSON(context.Background(), nil, srv.URL, &v); err == nil {
-		t.Fatal("getJSON contra servidor caído debe fallar")
+	if err := GetJSON(context.Background(), nil, srv.URL, &v); err == nil {
+		t.Fatal("GetJSON contra servidor caído debe fallar")
 	}
 }
 
@@ -49,8 +49,8 @@ func TestGetJSONBadStatusFails(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	defer srv.Close()
 	var v any
-	if err := getJSON(context.Background(), nil, srv.URL, &v); err == nil {
-		t.Fatal("getJSON con HTTP 404 debe fallar")
+	if err := GetJSON(context.Background(), nil, srv.URL, &v); err == nil {
+		t.Fatal("GetJSON con HTTP 404 debe fallar")
 	}
 }
 
@@ -60,8 +60,8 @@ func TestGetJSONBadBodyFails(t *testing.T) {
 	}))
 	defer srv.Close()
 	var v any
-	if err := getJSON(context.Background(), nil, srv.URL, &v); err == nil {
-		t.Fatal("getJSON con cuerpo corrupto debe fallar")
+	if err := GetJSON(context.Background(), nil, srv.URL, &v); err == nil {
+		t.Fatal("GetJSON con cuerpo corrupto debe fallar")
 	}
 }
 

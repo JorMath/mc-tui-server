@@ -47,8 +47,8 @@ func orDefault(client *http.Client) *http.Client {
 	return client
 }
 
-// getJSON hace GET a url y decodifica la respuesta JSON en v.
-func getJSON(ctx context.Context, client *http.Client, url string, v any) error {
+// GetJSON hace GET a url y decodifica la respuesta JSON en v.
+func GetJSON(ctx context.Context, client *http.Client, url string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("creating request to %s: %w", url, err)
