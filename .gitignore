@@ -1,0 +1,42 @@
+# Binarios compilados
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/bin/
+/dist/
+
+# Salida de tests y cobertura
+*.test
+*.out
+coverage.html
+coverage.out
+
+# Vendor de dependencias (usamos go mod)
+/vendor/
+
+# Workspace de Go
+go.work
+go.work.sum
+
+# Archivos de entorno
+.env
+.env.*
+
+# IDEs y editores
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Sistema operativo
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Datos de servidores Minecraft de prueba (jars, mundos, logs)
+/servers/
+/testdata/servers/
+*.jar
+logs/
