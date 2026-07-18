@@ -6,6 +6,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"mc-tui-server/internal/metrics"
 	"mc-tui-server/internal/server"
 	"time"
 
@@ -18,10 +19,17 @@ const (
 )
 
 type app struct {
-	managers []*server.Manager
-	selected *tui.State[int]
-	statuses *tui.State[map[string]server.Status]
-	logs     *tui.State[map[string][]string]
+	managers  []*server.Manager
+	selected  *tui.State[int]
+	statuses  *tui.State[map[string]server.Status]
+	logs      *tui.State[map[string][]string]
+	cmdActive *tui.State[bool]
+	cmdText   *tui.State[string]
+
+	collector *metrics.Collector
+	samples   *tui.State[map[string]metrics.Sample]
+	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
+	lastPIDs map[string]int
 }
 
 func App(managers []*server.Manager) *app {
@@ -32,10 +40,15 @@ func App(managers []*server.Manager) *app {
 		logs[m.Instance().Name] = nil
 	}
 	return &app{
-		managers: managers,
-		selected: tui.NewState(0),
-		statuses: tui.NewState(statuses),
-		logs:     tui.NewState(logs),
+		managers:  managers,
+		selected:  tui.NewState(0),
+		statuses:  tui.NewState(statuses),
+		logs:      tui.NewState(logs),
+		cmdActive: tui.NewState(false),
+		cmdText:   tui.NewState(""),
+		collector: metrics.NewCollector(),
+		samples:   tui.NewState(map[string]metrics.Sample{}),
+		lastPIDs:  map[string]int{},
 	}
 }
 
@@ -81,6 +94,40 @@ func (a *app) refreshStatuses() {
 		}
 		return m
 	})
+	a.refreshSamples()
+}
+
+func (a *app) refreshSamples() {
+	a.samples.Update(func(m map[string]metrics.Sample) map[string]metrics.Sample {
+		for _, mgr := range a.managers {
+			name := mgr.Instance().Name
+			pid := mgr.PID()
+			if old := a.lastPIDs[name]; old != 0 && old != pid {
+				a.collector.Forget(old)
+			}
+			a.lastPIDs[name] = pid
+			if pid == 0 {
+				delete(m, name)
+				continue
+			}
+			s, err := a.collector.Sample(pid)
+			if err != nil {
+				// El proceso pudo morir entre PID() y Sample(); se limpia solo.
+				delete(m, name)
+				continue
+			}
+			m[name] = s
+		}
+		return m
+	})
+}
+
+func (a *app) metricText(name string) string {
+	s, ok := a.samples.Get()[name]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("cpu %.1f%% · ram %dM", s.CPUPercent, s.RSSBytes/(1024*1024))
 }
 
 func (a *app) startSelected() {
@@ -119,9 +166,54 @@ func (a *app) restartSelected() {
 	}()
 }
 
+func (a *app) appendCmdChar(ke tui.KeyEvent) {
+	a.cmdText.Update(func(s string) string { return s + string(ke.Rune) })
+}
+
+func (a *app) deleteCmdChar(ke tui.KeyEvent) {
+	a.cmdText.Update(func(s string) string {
+		r := []rune(s)
+		if len(r) == 0 {
+			return s
+		}
+		return string(r[:len(r)-1])
+	})
+}
+
+func (a *app) submitCmd(ke tui.KeyEvent) {
+	text := a.cmdText.Get()
+	a.cmdText.Set("")
+	if text == "" {
+		return
+	}
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	a.appendLog(mgr.Instance().Name, "> "+text)
+	if err := mgr.Send(text); err != nil {
+		a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
+	}
+}
+
+func (a *app) closeCmd(ke tui.KeyEvent) {
+	a.cmdActive.Set(false)
+	a.cmdText.Set("")
+}
+
 func (a *app) KeyMap() tui.KeyMap {
+	if a.cmdActive.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, a.appendCmdChar),
+			tui.OnStop(tui.KeyBackspace, a.deleteCmdChar),
+			tui.OnStop(tui.KeyEnter, a.submitCmd),
+			tui.OnStop(tui.KeyEscape, a.closeCmd),
+		}
+	}
 	return tui.KeyMap{
 		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
+		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
+		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -243,21 +335,32 @@ func (a *app) Render(app *tui.App) *tui.Element {
 	for i, mgr := range a.managers {
 		_ = i
 		__tui_9 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		)
+		__tui_10 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithJustify(tui.JustifySpaceBetween),
 		)
-		__tui_10 := tui.New(
+		__tui_11 := tui.New(
 			tui.WithText(mgr.Instance().Name),
 		)
-		__tui_9.AddChild(__tui_10)
-		__tui_11 := tui.New(
+		__tui_10.AddChild(__tui_11)
+		__tui_12 := tui.New(
 			tui.WithText(a.statusText(mgr.Instance().Name)),
 		)
-		__tui_9.AddChild(__tui_11)
+		__tui_10.AddChild(__tui_12)
+		__tui_9.AddChild(__tui_10)
+		if a.metricText(mgr.Instance().Name) != "" {
+			__tui_13 := tui.New(
+				tui.WithText(a.metricText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_9.AddChild(__tui_13)
+		}
 		__tui_5.AddChild(__tui_9)
 	}
 	__tui_4.AddChild(__tui_5)
-	__tui_12 := tui.New(
+	__tui_14 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		tui.WithBorder(tui.BorderRounded),
 		tui.WithPadding(1),
@@ -265,27 +368,56 @@ func (a *app) Render(app *tui.App) *tui.Element {
 		tui.WithScrollable(tui.ScrollVertical),
 		tui.WithScrollOffset(0, math.MaxInt),
 	)
-	__tui_13 := tui.New(
+	__tui_15 := tui.New(
 		tui.WithText(fmt.Sprintf("Consola — %s", a.currentName())),
 		tui.WithFlexShrink(0),
 		tui.WithTextStyle(tui.NewStyle().Bold()),
 	)
-	__tui_12.AddChild(__tui_13)
+	__tui_14.AddChild(__tui_15)
 	for __idx_0, line := range a.currentLogs() {
 		_ = __idx_0
-		__tui_14 := tui.New(
+		__tui_16 := tui.New(
 			tui.WithText(line),
 		)
-		__tui_12.AddChild(__tui_14)
+		__tui_14.AddChild(__tui_16)
 	}
-	__tui_4.AddChild(__tui_12)
+	__tui_4.AddChild(__tui_14)
 	__tui_0.AddChild(__tui_4)
-	__tui_15 := tui.New(
-		tui.WithText("↑/↓ seleccionar | s iniciar | x detener | r reiniciar | q salir"),
-		tui.WithFlexShrink(0),
-		tui.WithTextStyle(tui.NewStyle().Dim()),
-	)
-	__tui_0.AddChild(__tui_15)
+	if a.cmdActive.Get() {
+		__tui_17 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_18 := tui.New(
+			tui.WithText(fmt.Sprintf("%s >", a.currentName())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_17.AddChild(__tui_18)
+		__tui_19 := tui.New(
+			tui.WithText(a.cmdText.Get()),
+		)
+		__tui_17.AddChild(__tui_19)
+		__tui_20 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+		)
+		__tui_17.AddChild(__tui_20)
+		__tui_21 := tui.New(
+			tui.WithText("(Enter envía | Esc cierra)"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_17.AddChild(__tui_21)
+		__tui_0.AddChild(__tui_17)
+	} else {
+		__tui_22 := tui.New(
+			tui.WithText("↑/↓ seleccionar | s iniciar | x detener | r reiniciar | c/Enter comando | q salir"),
+			tui.WithFlexShrink(0),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_22)
+	}
 
 	return __tui_0
 }
@@ -299,6 +431,8 @@ func (a *app) updatePropsFields(fresh tui.Component) {
 		return
 	}
 	a.managers = f.managers
+	a.collector = f.collector
+	a.lastPIDs = f.lastPIDs
 }
 
 func (a *app) UpdateProps(fresh tui.Component) {
@@ -319,6 +453,15 @@ func (a *app) bindAppFields(app *tui.App) {
 	}
 	if a.logs != nil {
 		a.logs.BindApp(app)
+	}
+	if a.cmdActive != nil {
+		a.cmdActive.BindApp(app)
+	}
+	if a.cmdText != nil {
+		a.cmdText.BindApp(app)
+	}
+	if a.samples != nil {
+		a.samples.BindApp(app)
 	}
 }
 

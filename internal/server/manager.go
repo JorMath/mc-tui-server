@@ -101,6 +101,16 @@ func (m *Manager) Status() Status {
 	return m.status
 }
 
+// PID devuelve el PID del proceso del servidor, o 0 si no está corriendo.
+func (m *Manager) PID() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.status == Stopped {
+		return 0
+	}
+	return m.cmd.Process.Pid
+}
+
 // Start lanza el proceso del servidor y comienza a leer sus logs.
 func (m *Manager) Start() error {
 	m.mu.Lock()

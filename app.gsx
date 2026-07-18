@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"math"
+	"mc-tui-server/internal/metrics"
 	"mc-tui-server/internal/server"
 	"time"
 	tui "github.com/grindlemire/go-tui"
@@ -14,10 +15,17 @@ const (
 )
 
 type app struct {
-	managers []*server.Manager
-	selected *tui.State[int]
-	statuses *tui.State[map[string]server.Status]
-	logs     *tui.State[map[string][]string]
+	managers  []*server.Manager
+	selected  *tui.State[int]
+	statuses  *tui.State[map[string]server.Status]
+	logs      *tui.State[map[string][]string]
+	cmdActive *tui.State[bool]
+	cmdText   *tui.State[string]
+
+	collector *metrics.Collector
+	samples   *tui.State[map[string]metrics.Sample]
+	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
+	lastPIDs map[string]int
 }
 
 func App(managers []*server.Manager) *app {
@@ -28,10 +36,15 @@ func App(managers []*server.Manager) *app {
 		logs[m.Instance().Name] = nil
 	}
 	return &app{
-		managers: managers,
-		selected: tui.NewState(0),
-		statuses: tui.NewState(statuses),
-		logs:     tui.NewState(logs),
+		managers:  managers,
+		selected:  tui.NewState(0),
+		statuses:  tui.NewState(statuses),
+		logs:      tui.NewState(logs),
+		cmdActive: tui.NewState(false),
+		cmdText:   tui.NewState(""),
+		collector: metrics.NewCollector(),
+		samples:   tui.NewState(map[string]metrics.Sample{}),
+		lastPIDs:  map[string]int{},
 	}
 }
 
@@ -77,6 +90,41 @@ func (a *app) refreshStatuses() {
 		}
 		return m
 	})
+	a.refreshSamples()
+}
+
+// refreshSamples muestrea CPU/RAM (R5) de las instancias corriendo.
+func (a *app) refreshSamples() {
+	a.samples.Update(func(m map[string]metrics.Sample) map[string]metrics.Sample {
+		for _, mgr := range a.managers {
+			name := mgr.Instance().Name
+			pid := mgr.PID()
+			if old := a.lastPIDs[name]; old != 0 && old != pid {
+				a.collector.Forget(old)
+			}
+			a.lastPIDs[name] = pid
+			if pid == 0 {
+				delete(m, name)
+				continue
+			}
+			s, err := a.collector.Sample(pid)
+			if err != nil {
+				// El proceso pudo morir entre PID() y Sample(); se limpia solo.
+				delete(m, name)
+				continue
+			}
+			m[name] = s
+		}
+		return m
+	})
+}
+
+func (a *app) metricText(name string) string {
+	s, ok := a.samples.Get()[name]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("cpu %.1f%% · ram %dM", s.CPUPercent, s.RSSBytes/(1024*1024))
 }
 
 // startSelected/stopSelected/restartSelected corren en goroutines porque
@@ -117,9 +165,56 @@ func (a *app) restartSelected() {
 	}()
 }
 
+// Barra de comandos (R2): en modo comando se capturan todas las teclas
+// con OnStop para que escribir no dispare los atajos globales.
+func (a *app) appendCmdChar(ke tui.KeyEvent) {
+	a.cmdText.Update(func(s string) string { return s + string(ke.Rune) })
+}
+
+func (a *app) deleteCmdChar(ke tui.KeyEvent) {
+	a.cmdText.Update(func(s string) string {
+		r := []rune(s)
+		if len(r) == 0 {
+			return s
+		}
+		return string(r[:len(r)-1])
+	})
+}
+
+func (a *app) submitCmd(ke tui.KeyEvent) {
+	text := a.cmdText.Get()
+	a.cmdText.Set("")
+	if text == "" {
+		return
+	}
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	a.appendLog(mgr.Instance().Name, "> "+text)
+	if err := mgr.Send(text); err != nil {
+		a.appendLog(mgr.Instance().Name, "[mc-tui] "+err.Error())
+	}
+}
+
+func (a *app) closeCmd(ke tui.KeyEvent) {
+	a.cmdActive.Set(false)
+	a.cmdText.Set("")
+}
+
 func (a *app) KeyMap() tui.KeyMap {
+	if a.cmdActive.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, a.appendCmdChar),
+			tui.OnStop(tui.KeyBackspace, a.deleteCmdChar),
+			tui.OnStop(tui.KeyEnter, a.submitCmd),
+			tui.OnStop(tui.KeyEscape, a.closeCmd),
+		}
+	}
 	return tui.KeyMap{
 		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
+		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
+		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
@@ -199,9 +294,14 @@ templ (a *app) Render() {
 					<span class="font-dim">Agrega una en instances.json</span>
 				}
 				for i, mgr := range a.managers {
-					<div class="flex justify-between">
-						<span class={a.rowClass(i)}>{mgr.Instance().Name}</span>
-						<span class={a.statusClass(mgr.Instance().Name)}>{a.statusText(mgr.Instance().Name)}</span>
+					<div class="flex-col">
+						<div class="flex justify-between">
+							<span class={a.rowClass(i)}>{mgr.Instance().Name}</span>
+							<span class={a.statusClass(mgr.Instance().Name)}>{a.statusText(mgr.Instance().Name)}</span>
+						</div>
+						if a.metricText(mgr.Instance().Name) != "" {
+							<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
+						}
 					</div>
 				}
 			</div>
@@ -216,6 +316,15 @@ templ (a *app) Render() {
 				}
 			</div>
 		</div>
-		<span class="font-dim shrink-0">↑/↓ seleccionar | s iniciar | x detener | r reiniciar | q salir</span>
+		if a.cmdActive.Get() {
+			<div class="flex gap-1 shrink-0 px-1">
+				<span class="text-cyan font-bold">{fmt.Sprintf("%s >", a.currentName())}</span>
+				<span>{a.cmdText.Get()}</span>
+				<span class="text-cyan blink">_</span>
+				<span class="font-dim">(Enter envía | Esc cierra)</span>
+			</div>
+		} else {
+			<span class="font-dim shrink-0">↑/↓ seleccionar | s iniciar | x detener | r reiniciar | c/Enter comando | q salir</span>
+		}
 	</div>
 }

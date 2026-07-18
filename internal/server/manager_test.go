@@ -111,6 +111,25 @@ func TestStartEmitsLogsAndRuns(t *testing.T) {
 	waitForLog(t, m, "linea de stderr")
 }
 
+func TestPID(t *testing.T) {
+	m := newTestManager(t, "obedient")
+	if got := m.PID(); got != 0 {
+		t.Fatalf("PID detenido = %d, quiero 0", got)
+	}
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := m.PID(); got <= 0 {
+		t.Fatalf("PID corriendo = %d, quiero > 0", got)
+	}
+	if err := m.Stop(5 * time.Second); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := m.PID(); got != 0 {
+		t.Fatalf("PID tras Stop = %d, quiero 0", got)
+	}
+}
+
 func TestStartWhileRunningFails(t *testing.T) {
 	m := newTestManager(t, "obedient")
 	if err := m.Start(); err != nil {
