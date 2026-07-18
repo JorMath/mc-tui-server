@@ -32,7 +32,8 @@ func run() error {
 		managers = append(managers, server.New(inst))
 	}
 
-	application, err := tui.NewApp(tui.WithRootComponent(App(managers)))
+	root := App(store, managers)
+	application, err := tui.NewApp(tui.WithRootComponent(root))
 	if err != nil {
 		return err
 	}
@@ -42,8 +43,9 @@ func run() error {
 	}
 
 	// Al salir de la TUI, detener con gracia los servidores que sigan vivos
-	// para no dejar procesos java huérfanos.
-	for _, m := range managers {
+	// (incluidos los creados por el asistente) para no dejar procesos java
+	// huérfanos.
+	for _, m := range root.managers.Get() {
 		if m.Status() == server.Running {
 			_ = m.Stop(stopTimeout)
 		}
