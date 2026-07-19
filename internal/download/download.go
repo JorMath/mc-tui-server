@@ -35,6 +35,12 @@ func For(t config.ServerType, client *http.Client) (Provider, error) {
 		return &Purpur{Client: client}, nil
 	case config.Fabric:
 		return &Fabric{Client: client}, nil
+	case config.Forge:
+		return &Forge{Client: client}, nil
+	case config.NeoForge:
+		return &NeoForge{Client: client}, nil
+	case config.Quilt:
+		return &Quilt{Client: client}, nil
 	default:
 		return nil, fmt.Errorf("unsupported server type: %q", t)
 	}

@@ -8,62 +8,11 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-
-	"github.com/JorMath/mc-tui-server/internal/download"
 )
-
-const (
-	defaultForgeMaven = "https://maven.minecraftforge.net"
-	defaultNeoMaven   = "https://maven.neoforged.net"
-	defaultQuiltMeta  = "https://meta.quiltmc.org"
-)
-
-// ForgeInstallerURL arma la URL del installer oficial de Forge para la
-// versión de Minecraft y de Forge dadas (baseURL vacío usa el maven oficial).
-func ForgeInstallerURL(baseURL, mc, version string) string {
-	if baseURL == "" {
-		baseURL = defaultForgeMaven
-	}
-	full := mc + "-" + version
-	return fmt.Sprintf("%s/net/minecraftforge/forge/%s/forge-%s-installer.jar", baseURL, full, full)
-}
-
-// NeoForgeInstallerURL arma la URL del installer oficial de NeoForge. Las
-// versiones 47.x (MC 1.20.1) viven en el artefacto legacy net/neoforged/forge
-// con prefijo de versión de Minecraft; las demás en net/neoforged/neoforge.
-func NeoForgeInstallerURL(baseURL, mc, version string) string {
-	if baseURL == "" {
-		baseURL = defaultNeoMaven
-	}
-	if strings.HasPrefix(version, "47.") {
-		full := mc + "-" + version
-		return fmt.Sprintf("%s/releases/net/neoforged/forge/%s/forge-%s-installer.jar", baseURL, full, full)
-	}
-	return fmt.Sprintf("%s/releases/net/neoforged/neoforge/%s/neoforge-%s-installer.jar", baseURL, version, version)
-}
-
-// QuiltInstallerURL consulta el meta de Quilt y devuelve la URL del
-// installer más reciente.
-func QuiltInstallerURL(ctx context.Context, client *http.Client, baseURL string) (string, error) {
-	if baseURL == "" {
-		baseURL = defaultQuiltMeta
-	}
-	var installers []struct {
-		URL string `json:"url"`
-	}
-	if err := download.GetJSON(ctx, client, baseURL+"/v3/versions/installer", &installers); err != nil {
-		return "", err
-	}
-	if len(installers) == 0 || installers[0].URL == "" {
-		return "", fmt.Errorf("the Quilt meta API returned no installers")
-	}
-	return installers[0].URL, nil
-}
 
 // run ejecuta el installer y reenvía cada línea de salida a logf.
 func run(ctx context.Context, dir string, logf func(string), name string, args ...string) error {
@@ -107,13 +56,18 @@ func RunForgeLike(ctx context.Context, java, installerJar, dir string, logf func
 }
 
 // RunQuilt ejecuta el installer de Quilt, que deja un
-// quilt-server-launch.jar y descarga el server vanilla.
+// quilt-server-launch.jar y descarga el server vanilla. loaderVersion
+// vacío instala el loader más reciente.
 func RunQuilt(ctx context.Context, java, installerJar, dir, mc, loaderVersion string, logf func(string)) error {
 	if java == "" {
 		java = "java"
 	}
-	return run(ctx, dir, logf, java, "-jar", installerJar,
-		"install", "server", mc, loaderVersion, "--install-dir=.", "--download-server")
+	args := []string{"-jar", installerJar, "install", "server", mc}
+	if loaderVersion != "" {
+		args = append(args, loaderVersion)
+	}
+	args = append(args, "--install-dir=.", "--download-server")
+	return run(ctx, dir, logf, java, args...)
 }
 
 // argsDirGlobs son las rutas (relativas a la instancia) donde los

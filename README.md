@@ -14,8 +14,10 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **Interactive console** — live server log with a command bar to send
   commands straight to the server's stdin.
 - **Metrics** — per-instance CPU and RAM usage refreshed every 500ms.
-- **Version selector** — create instances by downloading the server jar
-  from the official Vanilla (Mojang), Paper, Purpur or Fabric APIs.
+- **Version selector** — create instances on Vanilla (Mojang), Paper,
+  Purpur, Fabric, Forge, NeoForge or Quilt. Jar-based servers download
+  straight from the official APIs; Forge/NeoForge/Quilt run their official
+  installer inside the instance automatically.
 - **File manager** — edit `server.properties` (comments preserved), list
   and delete worlds and plugins/mods safely.
 - **Modrinth** — search content filtered by your instance's loader and game

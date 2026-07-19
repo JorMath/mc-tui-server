@@ -12,7 +12,11 @@ import (
 )
 
 func TestForKnownTypes(t *testing.T) {
-	for _, typ := range []config.ServerType{config.Vanilla, config.Paper, config.Purpur, config.Fabric} {
+	types := []config.ServerType{
+		config.Vanilla, config.Paper, config.Purpur, config.Fabric,
+		config.Forge, config.NeoForge, config.Quilt,
+	}
+	for _, typ := range types {
 		p, err := For(typ, nil)
 		if err != nil {
 			t.Fatalf("For(%s): %v", typ, err)
@@ -24,7 +28,7 @@ func TestForKnownTypes(t *testing.T) {
 }
 
 func TestForUnknownTypeFails(t *testing.T) {
-	if _, err := For(config.ServerType("forge"), nil); err == nil {
+	if _, err := For(config.ServerType("bedrock"), nil); err == nil {
 		t.Fatal("For con tipo desconocido debe fallar")
 	}
 }

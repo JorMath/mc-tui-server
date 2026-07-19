@@ -51,7 +51,16 @@ var wizChoices = []wizChoice{
 	{Label: "paper", Type: config.Paper},
 	{Label: "purpur", Type: config.Purpur},
 	{Label: "fabric", Type: config.Fabric},
+	{Label: "forge", Type: config.Forge},
+	{Label: "neoforge", Type: config.NeoForge},
+	{Label: "quilt", Type: config.Quilt},
 	{Label: "modpack (Modrinth)", Modpack: true},
+}
+
+// installerBased indica los tipos cuyo "jar" descargado es en realidad un
+// installer que hay que ejecutar en la instancia.
+func installerBased(t config.ServerType) bool {
+	return t == config.Forge || t == config.NeoForge || t == config.Quilt
 }
 
 // wizIsModpack indica si la opción elegida en el paso de tipo es el flujo
@@ -178,18 +187,28 @@ func (a *app) wizStartDownload() {
 			return
 		}
 		dir := filepath.Join(a.dataDir, "servers", name)
-		jar := filepath.Join(dir, "server.jar")
-		err = download.DownloadFile(ctx, nil, url, jar, func(done, total int64) {
-			if total > 0 {
-				a.wizMsg.Set(fmt.Sprintf("Downloading... %d%% (%dMB of %dMB)",
-					done*100/total, done/(1024*1024), total/(1024*1024)))
-			} else {
-				a.wizMsg.Set(fmt.Sprintf("Downloading... %dMB", done/(1024*1024)))
+		var jarPath, argsDir string
+		if installerBased(typ) {
+			jarPath, argsDir, err = a.wizRunInstaller(ctx, typ, url, dir, version, "")
+			if err != nil {
+				a.wizFail(gen, err)
+				return
 			}
-		})
-		if err != nil {
-			a.wizFail(gen, err)
-			return
+		} else {
+			jar := filepath.Join(dir, "server.jar")
+			err = download.DownloadFile(ctx, nil, url, jar, func(done, total int64) {
+				if total > 0 {
+					a.wizMsg.Set(fmt.Sprintf("Downloading... %d%% (%dMB of %dMB)",
+						done*100/total, done/(1024*1024), total/(1024*1024)))
+				} else {
+					a.wizMsg.Set(fmt.Sprintf("Downloading... %dMB", done/(1024*1024)))
+				}
+			})
+			if err != nil {
+				a.wizFail(gen, err)
+				return
+			}
+			jarPath = "server.jar"
 		}
 		// El usuario aceptó el EULA en el paso anterior del asistente.
 		if err := os.WriteFile(filepath.Join(dir, "eula.txt"), []byte("eula=true\n"), 0o644); err != nil {
@@ -199,7 +218,8 @@ func (a *app) wizStartDownload() {
 		inst := config.Instance{
 			Name:     name,
 			Dir:      dir,
-			JarPath:  "server.jar",
+			JarPath:  jarPath,
+			ArgsDir:  argsDir,
 			MemoryMB: memMB,
 			Type:     typ,
 			Version:  version,
@@ -414,16 +434,42 @@ var loaderTypes = map[string]config.ServerType{
 	"quilt":    config.Quilt,
 }
 
-// wizInstallLoader monta el runtime de servidor que exige el pack y
-// devuelve cómo arrancarlo: un jar único o la carpeta de args-file de
-// Forge/NeoForge modernos.
-func (a *app) wizInstallLoader(ctx context.Context, dir string, ld mrpack.Loader) (jarPath, argsDir string, err error) {
+// wizRunInstaller descarga un installer de loader (Forge/NeoForge/Quilt)
+// en la instancia, lo ejecuta mostrando su salida y detecta cómo arrancar
+// el servidor resultante. loaderVer vacío deja que Quilt use el más nuevo.
+func (a *app) wizRunInstaller(ctx context.Context, typ config.ServerType, url, dir, mcVer, loaderVer string) (jarPath, argsDir string, err error) {
 	progress := func(line string) {
 		if r := []rune(line); len(r) > 70 {
 			line = string(r[:70]) + "…"
 		}
 		a.wizMsg.Set(line)
 	}
+	instJar := filepath.Join(dir, "loader-installer.jar")
+	a.wizMsg.Set(fmt.Sprintf("Downloading the %s installer...", typ))
+	if err := download.DownloadFile(ctx, nil, url, instJar, nil); err != nil {
+		return "", "", err
+	}
+	a.wizMsg.Set(fmt.Sprintf("Running the %s installer — this can take a few minutes...", typ))
+	if typ == config.Quilt {
+		err = installer.RunQuilt(ctx, "", instJar, dir, mcVer, loaderVer, progress)
+	} else {
+		err = installer.RunForgeLike(ctx, "", instJar, dir, progress)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	_ = os.Remove(instJar)
+	argsDir, jarPath, err = installer.DetectLaunch(dir)
+	if err != nil {
+		return "", "", err
+	}
+	return jarPath, argsDir, nil
+}
+
+// wizInstallLoader monta el runtime de servidor que exige el pack y
+// devuelve cómo arrancarlo: un jar único o la carpeta de args-file de
+// Forge/NeoForge modernos.
+func (a *app) wizInstallLoader(ctx context.Context, dir string, ld mrpack.Loader) (jarPath, argsDir string, err error) {
 	switch ld.Name {
 	case "fabric":
 		a.wizMsg.Set(fmt.Sprintf("Downloading Fabric server launcher (MC %s, loader %s)...", ld.MC, ld.Version))
@@ -436,46 +482,16 @@ func (a *app) wizInstallLoader(ctx context.Context, dir string, ld mrpack.Loader
 			return "", "", err
 		}
 		return "server.jar", "", nil
-	case "forge", "neoforge":
-		url := installer.ForgeInstallerURL("", ld.MC, ld.Version)
-		if ld.Name == "neoforge" {
-			url = installer.NeoForgeInstallerURL("", ld.MC, ld.Version)
-		}
-		instJar := filepath.Join(dir, "loader-installer.jar")
-		a.wizMsg.Set(fmt.Sprintf("Downloading the %s installer...", ld.Name))
-		if err := download.DownloadFile(ctx, nil, url, instJar, nil); err != nil {
-			return "", "", err
-		}
-		a.wizMsg.Set(fmt.Sprintf("Running the %s installer — this can take a few minutes...", ld.Name))
-		if err := installer.RunForgeLike(ctx, "", instJar, dir, progress); err != nil {
-			return "", "", err
-		}
-		_ = os.Remove(instJar)
-		argsDir, jarPath, err := installer.DetectLaunch(dir)
-		if err != nil {
-			return "", "", err
-		}
-		return jarPath, argsDir, nil
+	case "forge":
+		return a.wizRunInstaller(ctx, config.Forge, download.ForgeInstallerURL("", ld.MC, ld.Version), dir, ld.MC, ld.Version)
+	case "neoforge":
+		return a.wizRunInstaller(ctx, config.NeoForge, download.NeoForgeInstallerURL("", ld.MC, ld.Version), dir, ld.MC, ld.Version)
 	case "quilt":
-		qURL, err := installer.QuiltInstallerURL(ctx, nil, "")
+		qURL, err := download.QuiltInstallerURL(ctx, nil, "")
 		if err != nil {
 			return "", "", err
 		}
-		instJar := filepath.Join(dir, "loader-installer.jar")
-		a.wizMsg.Set("Downloading the Quilt installer...")
-		if err := download.DownloadFile(ctx, nil, qURL, instJar, nil); err != nil {
-			return "", "", err
-		}
-		a.wizMsg.Set("Running the Quilt installer...")
-		if err := installer.RunQuilt(ctx, "", instJar, dir, ld.MC, ld.Version, progress); err != nil {
-			return "", "", err
-		}
-		_ = os.Remove(instJar)
-		argsDir, jarPath, err := installer.DetectLaunch(dir)
-		if err != nil {
-			return "", "", err
-		}
-		return jarPath, argsDir, nil
+		return a.wizRunInstaller(ctx, config.Quilt, qURL, dir, ld.MC, ld.Version)
 	default:
 		return "", "", fmt.Errorf("unsupported loader %q", ld.Name)
 	}
