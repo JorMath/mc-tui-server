@@ -497,6 +497,38 @@ func (a *app) wizInstallLoader(ctx context.Context, dir string, ld mrpack.Loader
 	}
 }
 
+// wizDropClientOnly quita los archivos cuyo proyecto en Modrinth está
+// marcado server_side "unsupported": muchos packs etiquetan mal sus mods
+// de cliente (shaders, HUD...) y crashean el servidor dedicado al cargar
+// clases de cliente. Si la consulta falla se instala todo (mejor un aviso
+// que bloquear la instalación por un fallo de red).
+func (a *app) wizDropClientOnly(ctx context.Context, files []mrpack.IndexFile) ([]mrpack.IndexFile, int) {
+	var ids []string
+	seen := map[string]bool{}
+	for _, f := range files {
+		if id := f.ModrinthProject(); id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return files, 0
+	}
+	a.wizMsg.Set("Checking which mods are server-side...")
+	unsupported, err := a.mr.ServerUnsupported(ctx, ids)
+	if err != nil || len(unsupported) == 0 {
+		return files, 0
+	}
+	var out []mrpack.IndexFile
+	for _, f := range files {
+		if unsupported[f.ModrinthProject()] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out, len(files) - len(out)
+}
+
 // wizStartModpackInstall descarga el .mrpack, instala sus archivos y
 // overrides en la instancia nueva y monta el runtime del loader que pide
 // el pack (Fabric, Forge, NeoForge o Quilt).
@@ -541,6 +573,7 @@ func (a *app) wizStartModpackInstall() {
 			a.wizFail(gen, err)
 			return
 		}
+		files, skipped := a.wizDropClientOnly(ctx, files)
 		for i, f := range files {
 			a.wizMsg.Set(fmt.Sprintf("Downloading server files %d/%d — %s",
 				i+1, len(files), path.Base(f.Path)))
@@ -591,6 +624,9 @@ func (a *app) wizStartModpackInstall() {
 		})
 		a.appendLog(name, fmt.Sprintf("[mc-tui] Modpack installed: %s %s (MC %s, %s %s, %d MB)",
 			pack.Title, pv.VersionNumber, ld.MC, ld.Name, ld.Version, memMB))
+		if skipped > 0 {
+			a.appendLog(name, fmt.Sprintf("[mc-tui] Skipped %d client-only mods (Modrinth marks them server-unsupported)", skipped))
+		}
 		a.selected.Set(len(a.managers.Get()) - 1)
 		a.wizClose()
 	}()

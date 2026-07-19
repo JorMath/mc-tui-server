@@ -228,6 +228,35 @@ func (c *Client) latestFile(ctx context.Context, projectID string, loaders []str
 	return File{URL: chosen.URL, Filename: chosen.Filename}, nil
 }
 
+// ServerUnsupported consulta en lote los proyectos dados y devuelve el
+// conjunto de IDs cuya ficha en Modrinth dice server_side "unsupported".
+// Muchos modpacks marcan mods solo-cliente como requeridos en el servidor
+// en su índice; la ficha del proyecto es la fuente de verdad.
+func (c *Client) ServerUnsupported(ctx context.Context, ids []string) (map[string]bool, error) {
+	out := map[string]bool{}
+	// Lotes de 200 para no exceder el largo máximo de URL.
+	for start := 0; start < len(ids); start += 200 {
+		end := min(start+200, len(ids))
+		params := url.Values{}
+		params.Set("ids", jsonList(ids[start:end]))
+
+		var projects []struct {
+			ID         string `json:"id"`
+			ServerSide string `json:"server_side"`
+		}
+		endpoint := c.base() + "/v2/projects?" + params.Encode()
+		if err := download.GetJSON(ctx, c.HTTP, endpoint, &projects); err != nil {
+			return nil, err
+		}
+		for _, p := range projects {
+			if p.ServerSide == "unsupported" {
+				out[p.ID] = true
+			}
+		}
+	}
+	return out, nil
+}
+
 // LatestFile devuelve el archivo de la versión más reciente del proyecto
 // compatible con el loader y la versión del juego.
 func (c *Client) LatestFile(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, error) {

@@ -93,6 +93,22 @@ func (ix Index) Loader() (Loader, error) {
 	return Loader{}, fmt.Errorf("the pack index does not declare a supported loader (fabric, quilt, forge or neoforge)")
 }
 
+// ModrinthProject extrae el ID de proyecto de Modrinth de la URL de
+// descarga del archivo (cdn.modrinth.com/data/<id>/...), o "" si el
+// archivo no viene del CDN de Modrinth.
+func (f IndexFile) ModrinthProject() string {
+	for _, u := range f.Downloads {
+		const marker = "cdn.modrinth.com/data/"
+		_, rest, ok := strings.Cut(u, marker)
+		if !ok {
+			continue
+		}
+		id, _, _ := strings.Cut(rest, "/")
+		return id
+	}
+	return ""
+}
+
 // ServerFiles devuelve los archivos que aplican al servidor (env.server
 // distinto de unsupported), validando que las rutas queden dentro de la
 // instancia y tengan URL de descarga.

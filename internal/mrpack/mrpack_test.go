@@ -171,3 +171,14 @@ func TestExtractOverridesRejectsZipSlip(t *testing.T) {
 		t.Fatal("una entrada con .. debe fallar")
 	}
 }
+
+func TestModrinthProject(t *testing.T) {
+	f := IndexFile{Downloads: []string{"https://cdn.modrinth.com/data/GchcoXML/versions/iQ1SwGc3/oculus.jar"}}
+	if got := f.ModrinthProject(); got != "GchcoXML" {
+		t.Fatalf("ModrinthProject = %q", got)
+	}
+	f = IndexFile{Downloads: []string{"https://otro-host.example/mod.jar"}}
+	if got := f.ModrinthProject(); got != "" {
+		t.Fatalf("ModrinthProject con host ajeno = %q, quiero vacío", got)
+	}
+}

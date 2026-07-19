@@ -319,3 +319,36 @@ func TestLatestDatapackFileNoVersionsFails(t *testing.T) {
 		t.Fatal("sin versiones datapack compatibles debe fallar")
 	}
 }
+
+func TestServerUnsupportedBatches(t *testing.T) {
+	var gotIDs []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/projects", func(w http.ResponseWriter, r *http.Request) {
+		gotIDs = append(gotIDs, r.URL.Query().Get("ids"))
+		fmt.Fprint(w, `[
+			{"id":"AAAA","server_side":"required"},
+			{"id":"BBBB","server_side":"unsupported"},
+			{"id":"CCCC","server_side":"optional"}
+		]`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Client{BaseURL: srv.URL}
+	unsupported, err := c.ServerUnsupported(ctx(), []string{"AAAA", "BBBB", "CCCC"})
+	if err != nil {
+		t.Fatalf("ServerUnsupported: %v", err)
+	}
+	if len(unsupported) != 1 || !unsupported["BBBB"] {
+		t.Fatalf("unsupported = %v", unsupported)
+	}
+	if len(gotIDs) != 1 || gotIDs[0] != `["AAAA","BBBB","CCCC"]` {
+		t.Fatalf("ids = %v", gotIDs)
+	}
+}
+
+func TestServerUnsupportedErrorPropagates(t *testing.T) {
+	c := &Client{BaseURL: "http://127.0.0.1:1"}
+	if _, err := c.ServerUnsupported(ctx(), []string{"AAAA"}); err == nil {
+		t.Fatal("ServerUnsupported contra servidor inexistente debe fallar")
+	}
+}
