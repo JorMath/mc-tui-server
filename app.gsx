@@ -27,9 +27,10 @@ templ HintsRow(hints []hint, green bool) {
 	</div>
 }
 
-// Sidebar lista las instancias con su estado y métricas.
+// Sidebar lista las instancias con su estado y métricas. El ancho mínimo
+// se adapta al tamaño de la terminal.
 templ Sidebar(a *app) {
-	<div class="flex-col border-rounded p-1 shrink-0" minWidth={30}>
+	<div class="flex-col border-rounded p-1 shrink-0" minWidth={a.sidebarMinWidth()}>
 		<span class="font-bold shrink-0">Instances</span>
 		if len(a.managers.Get()) == 0 {
 			<span class="font-dim">No instances yet.</span>
@@ -132,7 +133,7 @@ templ FooterBar(a *app) {
 
 templ (a *app) Render() {
 	if a.splash.Get() {
-		@SplashView()
+		@SplashView(a)
 	} else {
 		<div class="flex-col h-full p-1 gap-1">
 			<div class="flex justify-between shrink-0">

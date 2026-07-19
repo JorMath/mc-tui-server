@@ -327,11 +327,12 @@ func (a *app) wizFetchPackVersions() {
 
 func (a *app) wizPackItems() []listItem {
 	packs := a.wizPacks.Get()
+	limit := a.descLimit()
 	lines := make([]string, len(packs))
 	for i, p := range packs {
 		desc := p.Description
-		if r := []rune(desc); len(r) > 50 {
-			desc = string(r[:50]) + "…"
+		if r := []rune(desc); len(r) > limit {
+			desc = string(r[:limit]) + "…"
 		}
 		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
 	}

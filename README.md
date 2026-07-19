@@ -34,7 +34,9 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **Java** on your PATH (or set `java_path` per instance) — the app manages
   server processes but does not install Java.
 - A terminal with truecolor support and a font that includes block
-  characters (Windows Terminal, or any modern Linux terminal).
+  characters (Windows Terminal, or any modern Linux terminal). The layout
+  adapts to the window size on the fly — sidebar, splash and hint bar
+  scale down on small terminals.
 
 ## Install
 

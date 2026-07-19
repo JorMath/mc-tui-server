@@ -1,8 +1,15 @@
 package main
 
-// SplashView pinta el bloque de césped y el título en bloques sólidos.
+// SplashView pinta el bloque de césped y el título en bloques sólidos; en
+// terminales chicas cae a una versión compacta de texto plano.
 // Los colores hex deben ser clases LITERALES (go-tui ignora class dinámica).
-templ SplashView() {
+templ SplashView(a *app) {
+	if a.splashCompact() {
+		<div class="flex-col h-full items-center justify-center gap-1">
+			<span class="font-bold text-[#7cc65c]">MC-TUI SERVER</span>
+			<span class="font-dim">Press any key to start</span>
+		</div>
+	} else {
 	<div class="flex-col h-full items-center justify-center gap-1">
 		<div class="flex-col">
 			for _, row := range splashLogoRows() {
@@ -32,4 +39,5 @@ templ SplashView() {
 		</div>
 		<span class="font-dim">Press any key to start</span>
 	</div>
+	}
 }

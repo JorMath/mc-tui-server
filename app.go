@@ -72,7 +72,10 @@ type app struct {
 	store   *config.Store
 	dataDir string
 	// binders acumula todos los State para vincularlos en BindApp.
-	binders  []tui.AppBinder
+	binders []tui.AppBinder
+	// ui es la tui.App en ejecución; da acceso al tamaño de la terminal
+	// para que el layout se adapte en cada render. Se setea en BindApp.
+	ui       *tui.App
 	managers *tui.State[[]*server.Manager]
 	// splash se muestra al arrancar hasta pulsar una tecla o agotar los
 	// ticks del timer de refresh. splashTicks solo lo toca ese timer.
@@ -238,9 +241,54 @@ func App(store *config.Store, managers []*server.Manager) *app {
 // y dispare el re-render. Lo llama SetRootComponent al arrancar; el
 // generador lo emitía cuando la struct app vivía dentro de app.gsx.
 func (a *app) BindApp(app *tui.App) {
+	a.ui = app
 	for _, b := range a.binders {
 		b.BindApp(app)
 	}
+}
+
+// termSize devuelve el tamaño actual de la terminal; 80x24 antes de que la
+// tui.App exista (p. ej. en tests).
+func (a *app) termSize() (int, int) {
+	if a.ui == nil {
+		return 80, 24
+	}
+	return a.ui.Size()
+}
+
+// sidebarMinWidth adapta el ancho del sidebar a la terminal: 30 celdas con
+// espacio de sobra y menos en terminales angostas para no ahogar la consola.
+func (a *app) sidebarMinWidth() int {
+	w, _ := a.termSize()
+	switch {
+	case w >= 76:
+		return 30
+	case w >= 56:
+		return 24
+	default:
+		return 18
+	}
+}
+
+// splashCompact indica si la terminal es demasiado chica para el logo y el
+// título en bloques (necesitan ~66x24).
+func (a *app) splashCompact() bool {
+	w, h := a.termSize()
+	return w < 66 || h < 24
+}
+
+// descLimit es el máximo de runas de descripción en las listas de Modrinth
+// según el ancho disponible.
+func (a *app) descLimit() int {
+	w, _ := a.termSize()
+	limit := w - 55
+	if limit < 15 {
+		return 15
+	}
+	if limit > 80 {
+		return 80
+	}
+	return limit
 }
 
 var _ tui.AppBinder = (*app)(nil)
@@ -310,6 +358,14 @@ func (a *app) appendLog(name, line string) {
 }
 
 func (a *app) mainHints() []hint {
+	// En terminales angostas la fila completa no cabe: se muestran solo
+	// los atajos esenciales para que el footer no desborde.
+	if w, _ := a.termSize(); w < 96 {
+		return []hint{
+			{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"},
+			{"n", "new"}, {"m", "modrinth"}, {"q", "quit"},
+		}
+	}
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},

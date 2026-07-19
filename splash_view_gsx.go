@@ -49,85 +49,112 @@ var _ tui.AppUnbinder = (*SplashViewView)(nil)
 
 var _ tui.PropsUpdater = (*SplashViewView)(nil)
 
-func SplashView() *SplashViewView {
+func SplashView(a *app) *SplashViewView {
 	var view SplashViewView
 	var watchers []tui.Watcher
 
-	__tui_0 := tui.New(
-		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-		tui.WithHeightPercent(100.00),
-		tui.WithAlign(tui.AlignCenter),
-		tui.WithJustify(tui.JustifyCenter),
-		tui.WithGap(1),
-	)
-	__tui_1 := tui.New(
-		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-	)
-	for __idx_0, row := range splashLogoRows() {
-		_ = __idx_0
+	var __tui_0 *tui.Element
+	if a.splashCompact() {
+		__tui_1 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+			tui.WithHeightPercent(100.00),
+			tui.WithAlign(tui.AlignCenter),
+			tui.WithJustify(tui.JustifyCenter),
+			tui.WithGap(1),
+		)
 		__tui_2 := tui.New(
-			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithText("MC-TUI SERVER"),
+			tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.RGBColor(124, 198, 92))),
 		)
-		for __idx_1, seg := range row {
-			_ = __idx_1
-			if seg.Key == "g" {
-				__tui_3 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
-				)
-				__tui_2.AddChild(__tui_3)
-			} else if seg.Key == "G" {
-				__tui_4 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(74, 158, 49))),
-				)
-				__tui_2.AddChild(__tui_4)
-			} else if seg.Key == "d" {
-				__tui_5 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(92, 61, 36))),
-				)
-				__tui_2.AddChild(__tui_5)
-			} else if seg.Key == "b" {
-				__tui_6 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(139, 98, 68))),
-				)
-				__tui_2.AddChild(__tui_6)
-			} else if seg.Key == "t" {
-				__tui_7 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(160, 118, 76))),
-				)
-				__tui_2.AddChild(__tui_7)
-			} else {
-				__tui_8 := tui.New(
-					tui.WithText(seg.Text),
-					tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(154, 143, 138))),
-				)
-				__tui_2.AddChild(__tui_8)
-			}
-		}
 		__tui_1.AddChild(__tui_2)
-	}
-	__tui_0.AddChild(__tui_1)
-	__tui_9 := tui.New(
-		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
-	)
-	for __idx_0, line := range splashTitle {
-		_ = __idx_0
-		__tui_10 := tui.New(
-			tui.WithText(line),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
+		__tui_3 := tui.New(
+			tui.WithText("Press any key to start"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_9.AddChild(__tui_10)
+		__tui_1.AddChild(__tui_3)
+		if __tui_0 == nil {
+			__tui_0 = __tui_1
+		}
+	} else {
+		__tui_4 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+			tui.WithHeightPercent(100.00),
+			tui.WithAlign(tui.AlignCenter),
+			tui.WithJustify(tui.JustifyCenter),
+			tui.WithGap(1),
+		)
+		__tui_5 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		)
+		for __idx_0, row := range splashLogoRows() {
+			_ = __idx_0
+			__tui_6 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			)
+			for __idx_1, seg := range row {
+				_ = __idx_1
+				if seg.Key == "g" {
+					__tui_7 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
+					)
+					__tui_6.AddChild(__tui_7)
+				} else if seg.Key == "G" {
+					__tui_8 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(74, 158, 49))),
+					)
+					__tui_6.AddChild(__tui_8)
+				} else if seg.Key == "d" {
+					__tui_9 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(92, 61, 36))),
+					)
+					__tui_6.AddChild(__tui_9)
+				} else if seg.Key == "b" {
+					__tui_10 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(139, 98, 68))),
+					)
+					__tui_6.AddChild(__tui_10)
+				} else if seg.Key == "t" {
+					__tui_11 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(160, 118, 76))),
+					)
+					__tui_6.AddChild(__tui_11)
+				} else {
+					__tui_12 := tui.New(
+						tui.WithText(seg.Text),
+						tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(154, 143, 138))),
+					)
+					__tui_6.AddChild(__tui_12)
+				}
+			}
+			__tui_5.AddChild(__tui_6)
+		}
+		__tui_4.AddChild(__tui_5)
+		__tui_13 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
+		)
+		for __idx_0, line := range splashTitle {
+			_ = __idx_0
+			__tui_14 := tui.New(
+				tui.WithText(line),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.RGBColor(124, 198, 92))),
+			)
+			__tui_13.AddChild(__tui_14)
+		}
+		__tui_4.AddChild(__tui_13)
+		__tui_15 := tui.New(
+			tui.WithText("Press any key to start"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_4.AddChild(__tui_15)
+		if __tui_0 == nil {
+			__tui_0 = __tui_4
+		}
 	}
-	__tui_0.AddChild(__tui_9)
-	__tui_11 := tui.New(
-		tui.WithText("Press any key to start"),
-		tui.WithTextStyle(tui.NewStyle().Dim()),
-	)
-	__tui_0.AddChild(__tui_11)
 
 	__bindApp := func(app *tui.App) {
 	}

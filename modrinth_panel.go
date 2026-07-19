@@ -208,11 +208,12 @@ func mrDownloadsText(n int) string {
 
 func (a *app) mrItems() []listItem {
 	results := a.mrResults.Get()
+	limit := a.descLimit()
 	lines := make([]string, len(results))
 	for i, p := range results {
 		desc := p.Description
-		if r := []rune(desc); len(r) > 50 {
-			desc = string(r[:50]) + "…"
+		if r := []rune(desc); len(r) > limit {
+			desc = string(r[:limit]) + "…"
 		}
 		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
 	}

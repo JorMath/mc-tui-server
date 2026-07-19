@@ -157,7 +157,7 @@ func Sidebar(a *app) *SidebarView {
 		tui.WithBorder(tui.BorderRounded),
 		tui.WithPadding(1),
 		tui.WithFlexShrink(0),
-		tui.WithMinWidth(30),
+		tui.WithMinWidth(a.sidebarMinWidth()),
 	)
 	__tui_1 := tui.New(
 		tui.WithText("Instances"),
@@ -615,7 +615,7 @@ func (a *app) Render(app *tui.App) *tui.Element {
 	var __tui_0 *tui.Element
 	if a.splash.Get() {
 		__tui_1 := app.Mount(a, 0, func() tui.Component {
-			return SplashView()
+			return SplashView(a)
 		})
 		if __tui_0 == nil {
 			__tui_0 = __tui_1
