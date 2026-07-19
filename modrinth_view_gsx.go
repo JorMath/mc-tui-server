@@ -63,7 +63,7 @@ func ModrinthView(a *app) *ModrinthViewView {
 		tui.WithFlexGrow(1),
 	)
 	__tui_1 := tui.New(
-		tui.WithText(fmt.Sprintf("Modrinth — %s", a.currentName())),
+		tui.WithText(fmt.Sprintf("Modrinth %s — %s", a.mrKind.Get(), a.currentName())),
 		tui.WithFlexShrink(0),
 		tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Green)),
 	)

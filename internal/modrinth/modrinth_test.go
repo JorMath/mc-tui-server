@@ -265,3 +265,54 @@ func TestModpackVersionsEmptyFails(t *testing.T) {
 		t.Fatal("modpack sin versiones Fabric debe fallar")
 	}
 }
+
+// --- Datapacks (v0.1.3) ------------------------------------------------------
+
+func TestSearchDatapacksBuildsFacets(t *testing.T) {
+	var gotFacets string
+	srv := searchServer(t, func(r *http.Request) {
+		gotFacets = r.URL.Query().Get("facets")
+	})
+	c := &Client{BaseURL: srv.URL}
+	packs, err := c.SearchDatapacks(ctx(), "terralith", "1.21.4")
+	if err != nil {
+		t.Fatalf("SearchDatapacks: %v", err)
+	}
+	if len(packs) != 2 {
+		t.Fatalf("packs = %+v", packs)
+	}
+	for _, want := range []string{`"project_type:datapack"`, `"versions:1.21.4"`} {
+		if !strings.Contains(gotFacets, want) {
+			t.Fatalf("facets %q sin %q", gotFacets, want)
+		}
+	}
+}
+
+func TestLatestDatapackFileUsesDatapackLoader(t *testing.T) {
+	var gotLoaders, gotVersions string
+	srv := versionServer(t, `[
+		{"files":[{"url":"https://cdn/t.zip","filename":"terralith.zip","primary":true}]}
+	]`, func(r *http.Request) {
+		gotLoaders = r.URL.Query().Get("loaders")
+		gotVersions = r.URL.Query().Get("game_versions")
+	})
+	c := &Client{BaseURL: srv.URL}
+	f, err := c.LatestDatapackFile(ctx(), "AAAA", "1.21.4")
+	if err != nil {
+		t.Fatalf("LatestDatapackFile: %v", err)
+	}
+	if f.Filename != "terralith.zip" {
+		t.Fatalf("file = %+v", f)
+	}
+	if gotLoaders != `["datapack"]` || gotVersions != `["1.21.4"]` {
+		t.Fatalf("loaders = %q, game_versions = %q", gotLoaders, gotVersions)
+	}
+}
+
+func TestLatestDatapackFileNoVersionsFails(t *testing.T) {
+	srv := versionServer(t, `[]`, nil)
+	c := &Client{BaseURL: srv.URL}
+	if _, err := c.LatestDatapackFile(ctx(), "AAAA", "1.21.4"); err == nil {
+		t.Fatal("sin versiones datapack compatibles debe fallar")
+	}
+}

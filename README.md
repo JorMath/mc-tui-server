@@ -18,8 +18,10 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   from the official Vanilla (Mojang), Paper, Purpur or Fabric APIs.
 - **File manager** — edit `server.properties` (comments preserved), list
   and delete worlds and plugins/mods safely.
-- **Modrinth** — search plugins/mods filtered by your instance's loader and
-  game version, and install them with one key.
+- **Modrinth** — search content filtered by your instance's loader and game
+  version and install it with one key. Each instance only offers what it
+  supports: mods on Fabric, plugins on Paper/Purpur, and datapacks on every
+  type (installed into the active world); `Tab` switches the content type.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`):
   the wizard downloads the pack's server files and overrides, plus the
   Fabric server launcher the pack requires. Fabric modpacks only.
@@ -99,7 +101,7 @@ mc-tui-server -version   # print the version and exit
 | `s` / `x` / `r` | start / stop / restart |
 | `c` or `Enter` | command bar (send commands to the server) |
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
-| `m` | Modrinth search & install |
+| `m` | Modrinth search & install (mods/plugins/datapacks per instance type; `Tab` switches) |
 | `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a Fabric modpack |
 | `M` | change the instance's memory (MB, applies on next start) |
 | `R` | rename the selected instance (server must be stopped) |

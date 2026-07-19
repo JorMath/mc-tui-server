@@ -9,7 +9,7 @@ import (
 // ModrinthView es el panel de búsqueda e instalación de Modrinth (R6).
 templ ModrinthView(a *app) {
 	<div class="flex-col border-rounded border-green p-1 flex-grow">
-		<span class="font-bold text-green shrink-0">{fmt.Sprintf("Modrinth — %s", a.currentName())}</span>
+		<span class="font-bold text-green shrink-0">{fmt.Sprintf("Modrinth %s — %s", a.mrKind.Get(), a.currentName())}</span>
 		<div class="flex gap-1 shrink-0">
 			<span class="text-green font-bold">Search:</span>
 			<span>{a.mrQuery.Get()}</span>

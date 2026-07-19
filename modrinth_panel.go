@@ -10,22 +10,34 @@ import (
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/assets"
+	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
+	"github.com/JorMath/mc-tui-server/internal/properties"
 	tui "github.com/grindlemire/go-tui"
 )
+
+// mrKindsFor devuelve los tipos de contenido de Modrinth instalables en la
+// instancia: mods solo en Fabric (incluidas las creadas desde un modpack),
+// plugins en Paper/Purpur y datapacks en todas — van al mundo, no al loader.
+func mrKindsFor(t config.ServerType) []string {
+	switch t {
+	case config.Fabric:
+		return []string{"mods", "datapacks"}
+	case config.Paper, config.Purpur:
+		return []string{"plugins", "datapacks"}
+	default:
+		return []string{"datapacks"}
+	}
+}
 
 func (a *app) mrOpenPanel() {
 	mgr := a.current()
 	if mgr == nil {
 		return
 	}
-	inst := mgr.Instance()
-	if _, ok := assets.PluginsDir(inst.Type); !ok {
-		a.appendLog(inst.Name, "[mc-tui] vanilla servers do not support plugins/mods")
-		return
-	}
 	a.mrGen.Update(func(g int) int { return g + 1 })
+	a.mrKind.Set(mrKindsFor(mgr.Instance().Type)[0])
 	a.mrQuery.Set("")
 	a.mrResults.Set([]modrinth.Project{})
 	a.mrIdx.Set(0)
@@ -33,6 +45,34 @@ func (a *app) mrOpenPanel() {
 	a.mrMsg.Set("")
 	a.mrTyping.Set(true)
 	a.mrOpen.Set(true)
+}
+
+// mrToggleKind rota el tipo de contenido (Tab). Si ya hay una búsqueda
+// hecha, la repite en el tipo nuevo.
+func (a *app) mrToggleKind() {
+	mgr := a.current()
+	if mgr == nil || a.mrBusy.Get() {
+		return
+	}
+	kinds := mrKindsFor(mgr.Instance().Type)
+	if len(kinds) < 2 {
+		return
+	}
+	cur := a.mrKind.Get()
+	next := kinds[0]
+	for i, k := range kinds {
+		if k == cur {
+			next = kinds[(i+1)%len(kinds)]
+			break
+		}
+	}
+	a.mrKind.Set(next)
+	a.mrResults.Set([]modrinth.Project{})
+	a.mrIdx.Set(0)
+	a.mrMsg.Set("")
+	if !a.mrTyping.Get() && a.mrQuery.Get() != "" {
+		a.mrSearch()
+	}
 }
 
 func (a *app) mrClose() {
@@ -47,13 +87,20 @@ func (a *app) mrSearch() {
 		return
 	}
 	inst := mgr.Instance()
+	kind := a.mrKind.Get()
 	gen := a.mrGen.Get()
 	a.mrBusy.Set(true)
 	a.mrMsg.Set("Searching Modrinth...")
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		results, err := a.mr.Search(ctx, query, inst.Type, inst.Version)
+		var results []modrinth.Project
+		var err error
+		if kind == "datapacks" {
+			results, err = a.mr.SearchDatapacks(ctx, query, inst.Version)
+		} else {
+			results, err = a.mr.Search(ctx, query, inst.Type, inst.Version)
+		}
 		if a.mrGen.Get() != gen {
 			return
 		}
@@ -66,11 +113,24 @@ func (a *app) mrSearch() {
 		a.mrIdx.Set(0)
 		a.mrTyping.Set(false)
 		if len(results) == 0 {
-			a.mrMsg.Set(fmt.Sprintf("No results for %q compatible with %s %s", query, inst.Type, inst.Version))
+			a.mrMsg.Set(fmt.Sprintf("No %s found for %q compatible with %s %s", kind, query, inst.Type, inst.Version))
 			return
 		}
 		a.mrMsg.Set(fmt.Sprintf("%d results · Enter installs into the selected instance", len(results)))
 	}()
+}
+
+// datapacksDir devuelve la carpeta de datapacks (relativa a la instancia)
+// del mundo activo según level-name de server.properties, "world" por
+// defecto. Minecraft la carga aunque se cree antes del primer arranque.
+func datapacksDir(inst config.Instance) string {
+	world := "world"
+	if props, err := properties.Load(filepath.Join(inst.Dir, "server.properties")); err == nil {
+		if v, ok := props.Get("level-name"); ok && v != "" {
+			world = v
+		}
+	}
+	return filepath.Join(world, "datapacks")
 }
 
 func (a *app) mrInstall() {
@@ -81,10 +141,17 @@ func (a *app) mrInstall() {
 		return
 	}
 	inst := mgr.Instance()
+	kind := a.mrKind.Get()
 	project := results[idx]
-	sub, ok := assets.PluginsDir(inst.Type)
-	if !ok {
-		return
+	var sub string
+	if kind == "datapacks" {
+		sub = datapacksDir(inst)
+	} else {
+		var ok bool
+		sub, ok = assets.PluginsDir(inst.Type)
+		if !ok {
+			return
+		}
 	}
 	gen := a.mrGen.Get()
 	a.mrBusy.Set(true)
@@ -92,7 +159,13 @@ func (a *app) mrInstall() {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
-		file, err := a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
+		var file modrinth.File
+		var err error
+		if kind == "datapacks" {
+			file, err = a.mr.LatestDatapackFile(ctx, project.ID, inst.Version)
+		} else {
+			file, err = a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
+		}
 		if err == nil {
 			dest := filepath.Join(inst.Dir, sub, file.Filename)
 			err = download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
@@ -112,7 +185,11 @@ func (a *app) mrInstall() {
 			a.mrMsg.Set("Error: " + err.Error())
 			return
 		}
-		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
+		if kind == "datapacks" {
+			a.mrMsg.Set(fmt.Sprintf("Installed %s into %s · run /reload or restart to load it", file.Filename, filepath.ToSlash(sub)+"/"))
+		} else {
+			a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
+		}
 		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, file.Filename))
 	}()
 }
@@ -159,15 +236,29 @@ func (a *app) mrMove(delta int) {
 	})
 }
 
+// mrHasKinds indica si la instancia tiene más de un tipo de contenido y
+// por tanto Tab alterna entre ellos.
+func (a *app) mrHasKinds() bool {
+	mgr := a.current()
+	return mgr != nil && len(mrKindsFor(mgr.Instance().Type)) > 1
+}
+
 func (a *app) mrHints() []hint {
+	var hints []hint
 	if a.mrTyping.Get() {
-		return []hint{{"Enter", "search"}, {"Esc", "close"}}
+		hints = []hint{{"Enter", "search"}}
+	} else {
+		hints = []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}}
 	}
-	return []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}, {"Esc", "close"}}
+	if a.mrHasKinds() {
+		hints = append(hints, hint{"Tab", "switch type"})
+	}
+	return append(hints, hint{"Esc", "close"})
 }
 
 func (a *app) mrKeyMap() tui.KeyMap {
 	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
+	tab := tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.mrToggleKind() })
 	if a.mrTyping.Get() {
 		return tui.KeyMap{
 			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
@@ -183,6 +274,7 @@ func (a *app) mrKeyMap() tui.KeyMap {
 				})
 			}),
 			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrSearch() }),
+			tab,
 			esc,
 		}
 	}
@@ -193,6 +285,7 @@ func (a *app) mrKeyMap() tui.KeyMap {
 		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMove(10) }),
 		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
 		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
+		tab,
 		esc,
 	}
 }

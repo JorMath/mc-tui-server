@@ -65,22 +65,9 @@ func jsonList(items []string) string {
 	return string(b)
 }
 
-// Search busca proyectos compatibles con el tipo y la versión de la instancia.
-func (c *Client) Search(ctx context.Context, query string, t config.ServerType, gameVersion string) ([]Project, error) {
-	loaders, projectType, err := loadersFor(t)
-	if err != nil {
-		return nil, err
-	}
-	categories := make([]string, len(loaders))
-	for i, l := range loaders {
-		categories[i] = "categories:" + l
-	}
-	// Facets: AND entre grupos, OR dentro de cada grupo.
-	facets := [][]string{
-		{"project_type:" + projectType},
-		{"versions:" + gameVersion},
-		categories,
-	}
+// search ejecuta /v2/search con los facets dados (AND entre grupos, OR
+// dentro de cada grupo).
+func (c *Client) search(ctx context.Context, query string, facets [][]string) ([]Project, error) {
 	facetsJSON, _ := json.Marshal(facets)
 
 	params := url.Values{}
@@ -98,30 +85,42 @@ func (c *Client) Search(ctx context.Context, query string, t config.ServerType, 
 	return result.Hits, nil
 }
 
+// Search busca proyectos compatibles con el tipo y la versión de la instancia.
+func (c *Client) Search(ctx context.Context, query string, t config.ServerType, gameVersion string) ([]Project, error) {
+	loaders, projectType, err := loadersFor(t)
+	if err != nil {
+		return nil, err
+	}
+	categories := make([]string, len(loaders))
+	for i, l := range loaders {
+		categories[i] = "categories:" + l
+	}
+	return c.search(ctx, query, [][]string{
+		{"project_type:" + projectType},
+		{"versions:" + gameVersion},
+		categories,
+	})
+}
+
+// SearchDatapacks busca datapacks compatibles con la versión del juego.
+// Los datapacks van al mundo, no al loader, así que sirven para cualquier
+// tipo de servidor.
+func (c *Client) SearchDatapacks(ctx context.Context, query, gameVersion string) ([]Project, error) {
+	return c.search(ctx, query, [][]string{
+		{"project_type:datapack"},
+		{"versions:" + gameVersion},
+	})
+}
+
 // SearchModpacks busca modpacks de Fabric instalables en un servidor
 // (server_side required u optional). Los packs de Forge/NeoForge quedan
 // fuera: el instalador solo soporta el server launcher de Fabric.
 func (c *Client) SearchModpacks(ctx context.Context, query string) ([]Project, error) {
-	facets := [][]string{
+	return c.search(ctx, query, [][]string{
 		{"project_type:modpack"},
 		{"categories:fabric"},
 		{"server_side:required", "server_side:optional"},
-	}
-	facetsJSON, _ := json.Marshal(facets)
-
-	params := url.Values{}
-	params.Set("query", query)
-	params.Set("limit", "20")
-	params.Set("facets", string(facetsJSON))
-
-	var result struct {
-		Hits []Project `json:"hits"`
-	}
-	endpoint := c.base() + "/v2/search?" + params.Encode()
-	if err := download.GetJSON(ctx, c.HTTP, endpoint, &result); err != nil {
-		return nil, err
-	}
-	return result.Hits, nil
+	})
 }
 
 // PackVersion es una versión instalable de un modpack con su .mrpack.
@@ -185,13 +184,10 @@ func (c *Client) ModpackVersions(ctx context.Context, projectID string) ([]PackV
 	return out, nil
 }
 
-// LatestFile devuelve el archivo de la versión más reciente del proyecto
-// compatible con el loader y la versión del juego.
-func (c *Client) LatestFile(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, error) {
-	loaders, _, err := loadersFor(t)
-	if err != nil {
-		return File{}, err
-	}
+// latestFile devuelve el archivo primario de la versión más reciente del
+// proyecto que sea compatible con los loaders y la versión del juego.
+// compat describe la combinación para los mensajes de error.
+func (c *Client) latestFile(ctx context.Context, projectID string, loaders []string, gameVersion, compat string) (File, error) {
 	params := url.Values{}
 	params.Set("loaders", jsonList(loaders))
 	params.Set("game_versions", jsonList([]string{gameVersion}))
@@ -208,7 +204,7 @@ func (c *Client) LatestFile(ctx context.Context, projectID string, t config.Serv
 		return File{}, err
 	}
 	if len(versions) == 0 {
-		return File{}, fmt.Errorf("no version of %s is compatible with %s %s", projectID, t, gameVersion)
+		return File{}, fmt.Errorf("no version of %s is compatible with %s", projectID, compat)
 	}
 	files := versions[0].Files
 	if len(files) == 0 {
@@ -222,4 +218,20 @@ func (c *Client) LatestFile(ctx context.Context, projectID string, t config.Serv
 		}
 	}
 	return File{URL: chosen.URL, Filename: chosen.Filename}, nil
+}
+
+// LatestFile devuelve el archivo de la versión más reciente del proyecto
+// compatible con el loader y la versión del juego.
+func (c *Client) LatestFile(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, error) {
+	loaders, _, err := loadersFor(t)
+	if err != nil {
+		return File{}, err
+	}
+	return c.latestFile(ctx, projectID, loaders, gameVersion, fmt.Sprintf("%s %s", t, gameVersion))
+}
+
+// LatestDatapackFile devuelve el zip de datapack más reciente del proyecto
+// compatible con la versión del juego.
+func (c *Client) LatestDatapackFile(ctx context.Context, projectID, gameVersion string) (File, error) {
+	return c.latestFile(ctx, projectID, []string{"datapack"}, gameVersion, "datapacks for "+gameVersion)
 }

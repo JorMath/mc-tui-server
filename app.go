@@ -142,8 +142,10 @@ type app struct {
 	fmMsg       *tui.State[string]
 
 	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
-	// cerrado, igual que wizGen.
+	// cerrado, igual que wizGen. mrKind es el tipo de contenido activo
+	// (mods/plugins/datapacks) según lo que soporte la instancia.
 	mr        *modrinth.Client
+	mrKind    *tui.State[string]
 	mrOpen    *tui.State[bool]
 	mrTyping  *tui.State[bool]
 	mrQuery   *tui.State[string]
@@ -215,6 +217,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmMsg:       newState(&reg, ""),
 
 		mr:        &modrinth.Client{},
+		mrKind:    newState(&reg, ""),
 		mrOpen:    newState(&reg, false),
 		mrTyping:  newState(&reg, false),
 		mrQuery:   newState(&reg, ""),
