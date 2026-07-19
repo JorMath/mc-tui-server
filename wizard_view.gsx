@@ -43,7 +43,7 @@ templ WizardView(a *app) {
 				<span>{a.wizPackQuery.Get()}</span>
 				<span class="text-cyan blink">_</span>
 			</div>
-			<span class="font-dim">Fabric modpacks only — the server runs on the Fabric launcher</span>
+			<span class="font-dim">Server-side modpacks: Fabric, Forge, NeoForge and Quilt</span>
 			if a.wizMsg.Get() != "" {
 				<span class="text-yellow">{a.wizMsg.Get()}</span>
 			}

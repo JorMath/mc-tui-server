@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -397,5 +399,31 @@ func TestLogChannelDoesNotBlockWhenFull(t *testing.T) {
 	}
 	if err := m.Stop(5 * time.Second); err != nil {
 		t.Fatalf("Stop: %v", err)
+	}
+}
+
+func TestJavaCommandArgsDirMode(t *testing.T) {
+	cmd := JavaCommand(config.Instance{
+		Name:     "s",
+		Dir:      `C:\srv`,
+		ArgsDir:  filepath.Join("libraries", "net", "minecraftforge", "forge", "1.20.1-47.4.18"),
+		MemoryMB: 4096,
+	})
+	joined := strings.Join(cmd.Args, " ")
+	want := "@" + filepath.Join("libraries", "net", "minecraftforge", "forge", "1.20.1-47.4.18", argsFileFor(runtime.GOOS))
+	if !strings.Contains(joined, want+" nogui") {
+		t.Fatalf("args = %q, falta %q", joined, want+" nogui")
+	}
+	if strings.Contains(joined, "-jar") {
+		t.Fatalf("args = %q, no debe usar -jar en modo ArgsDir", joined)
+	}
+}
+
+func TestArgsFileFor(t *testing.T) {
+	if got := argsFileFor("windows"); got != "win_args.txt" {
+		t.Fatalf("windows = %q", got)
+	}
+	if got := argsFileFor("linux"); got != "unix_args.txt" {
+		t.Fatalf("linux = %q", got)
 	}
 }

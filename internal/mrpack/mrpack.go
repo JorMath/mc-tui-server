@@ -64,25 +64,33 @@ func Parse(path string) (Index, error) {
 	return Index{}, fmt.Errorf("the pack has no %s (is it a .mrpack?)", indexName)
 }
 
-// FabricVersions valida que el modpack sea instalable por esta app y
-// devuelve las versiones de Minecraft y de fabric-loader. Los servidores se
-// lanzan con un único server.jar, así que solo Fabric está soportado:
-// Forge/NeoForge requieren su propio instalador y modelo de arranque.
-func (ix Index) FabricVersions() (mc, loader string, err error) {
-	for _, unsupported := range []string{"forge", "neoforge", "quilt-loader"} {
-		if v, ok := ix.Dependencies[unsupported]; ok {
-			return "", "", fmt.Errorf("this modpack requires %s %s; only Fabric modpacks can be installed", unsupported, v)
+// Loader identifica el loader que exige el modpack y sus versiones.
+type Loader struct {
+	Name    string // fabric, forge, neoforge o quilt
+	MC      string // versión de Minecraft
+	Version string // versión del loader
+}
+
+// loaderDeps mapea la clave de dependencies del índice al nombre del loader.
+var loaderDeps = []struct{ dep, name string }{
+	{"fabric-loader", "fabric"},
+	{"quilt-loader", "quilt"},
+	{"forge", "forge"},
+	{"neoforge", "neoforge"},
+}
+
+// Loader valida el índice y devuelve el loader que pide el pack.
+func (ix Index) Loader() (Loader, error) {
+	mc := ix.Dependencies["minecraft"]
+	if mc == "" {
+		return Loader{}, fmt.Errorf("the pack index does not declare a minecraft version")
+	}
+	for _, d := range loaderDeps {
+		if v, ok := ix.Dependencies[d.dep]; ok && v != "" {
+			return Loader{Name: d.name, MC: mc, Version: v}, nil
 		}
 	}
-	mc = ix.Dependencies["minecraft"]
-	if mc == "" {
-		return "", "", fmt.Errorf("the pack index does not declare a minecraft version")
-	}
-	loader = ix.Dependencies["fabric-loader"]
-	if loader == "" {
-		return "", "", fmt.Errorf("this modpack does not use Fabric; only Fabric modpacks can be installed")
-	}
-	return mc, loader, nil
+	return Loader{}, fmt.Errorf("the pack index does not declare a supported loader (fabric, quilt, forge or neoforge)")
 }
 
 // ServerFiles devuelve los archivos que aplican al servidor (env.server

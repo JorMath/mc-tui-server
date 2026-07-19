@@ -14,6 +14,7 @@ import (
 
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
+	"github.com/JorMath/mc-tui-server/internal/installer"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	"github.com/JorMath/mc-tui-server/internal/mrpack"
 	"github.com/JorMath/mc-tui-server/internal/server"
@@ -50,7 +51,7 @@ var wizChoices = []wizChoice{
 	{Label: "paper", Type: config.Paper},
 	{Label: "purpur", Type: config.Purpur},
 	{Label: "fabric", Type: config.Fabric},
-	{Label: "modpack (Modrinth · Fabric packs)", Modpack: true},
+	{Label: "modpack (Modrinth)", Modpack: true},
 }
 
 // wizIsModpack indica si la opción elegida en el paso de tipo es el flujo
@@ -325,6 +326,20 @@ func (a *app) wizFetchPackVersions() {
 	}()
 }
 
+// packLoaders extrae los loaders de mods de las categorías de un proyecto.
+func packLoaders(p modrinth.Project) string {
+	var found []string
+	for _, l := range []string{"fabric", "forge", "neoforge", "quilt"} {
+		for _, c := range p.Categories {
+			if c == l {
+				found = append(found, l)
+				break
+			}
+		}
+	}
+	return strings.Join(found, "/")
+}
+
 func (a *app) wizPackItems() []listItem {
 	packs := a.wizPacks.Get()
 	limit := a.descLimit()
@@ -334,7 +349,11 @@ func (a *app) wizPackItems() []listItem {
 		if r := []rune(desc); len(r) > limit {
 			desc = string(r[:limit]) + "…"
 		}
-		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+		loaders := packLoaders(p)
+		if loaders != "" {
+			loaders = " [" + loaders + "]"
+		}
+		lines[i] = fmt.Sprintf("%s%s (%s ⇩) — %s", p.Title, loaders, mrDownloadsText(p.Downloads), desc)
 	}
 	return fullItems(lines, a.wizPackIdx.Get())
 }
@@ -344,7 +363,11 @@ func (a *app) wizPackVerItems() []listItem {
 	lines := make([]string, len(vers))
 	for i, v := range vers {
 		games := strings.Join(v.GameVersions, ", ")
-		lines[i] = fmt.Sprintf("%s — MC %s [%s]", v.VersionNumber, games, v.VersionType)
+		loaders := strings.Join(v.Loaders, "/")
+		if loaders != "" {
+			loaders = " · " + loaders
+		}
+		lines[i] = fmt.Sprintf("%s — MC %s%s [%s]", v.VersionNumber, games, loaders, v.VersionType)
 	}
 	return fullItems(lines, a.wizPackVerIdx.Get())
 }
@@ -383,9 +406,84 @@ func (a *app) wizMovePackVer(delta int) {
 	})
 }
 
+// loaderTypes mapea el loader del mrpack al ServerType de la instancia.
+var loaderTypes = map[string]config.ServerType{
+	"fabric":   config.Fabric,
+	"forge":    config.Forge,
+	"neoforge": config.NeoForge,
+	"quilt":    config.Quilt,
+}
+
+// wizInstallLoader monta el runtime de servidor que exige el pack y
+// devuelve cómo arrancarlo: un jar único o la carpeta de args-file de
+// Forge/NeoForge modernos.
+func (a *app) wizInstallLoader(ctx context.Context, dir string, ld mrpack.Loader) (jarPath, argsDir string, err error) {
+	progress := func(line string) {
+		if r := []rune(line); len(r) > 70 {
+			line = string(r[:70]) + "…"
+		}
+		a.wizMsg.Set(line)
+	}
+	switch ld.Name {
+	case "fabric":
+		a.wizMsg.Set(fmt.Sprintf("Downloading Fabric server launcher (MC %s, loader %s)...", ld.MC, ld.Version))
+		fab := &download.Fabric{}
+		jarURL, err := fab.ServerJarURLFor(ctx, ld.MC, ld.Version)
+		if err != nil {
+			return "", "", err
+		}
+		if err := download.DownloadFile(ctx, nil, jarURL, filepath.Join(dir, "server.jar"), nil); err != nil {
+			return "", "", err
+		}
+		return "server.jar", "", nil
+	case "forge", "neoforge":
+		url := installer.ForgeInstallerURL("", ld.MC, ld.Version)
+		if ld.Name == "neoforge" {
+			url = installer.NeoForgeInstallerURL("", ld.MC, ld.Version)
+		}
+		instJar := filepath.Join(dir, "loader-installer.jar")
+		a.wizMsg.Set(fmt.Sprintf("Downloading the %s installer...", ld.Name))
+		if err := download.DownloadFile(ctx, nil, url, instJar, nil); err != nil {
+			return "", "", err
+		}
+		a.wizMsg.Set(fmt.Sprintf("Running the %s installer — this can take a few minutes...", ld.Name))
+		if err := installer.RunForgeLike(ctx, "", instJar, dir, progress); err != nil {
+			return "", "", err
+		}
+		_ = os.Remove(instJar)
+		argsDir, jarPath, err := installer.DetectLaunch(dir)
+		if err != nil {
+			return "", "", err
+		}
+		return jarPath, argsDir, nil
+	case "quilt":
+		qURL, err := installer.QuiltInstallerURL(ctx, nil, "")
+		if err != nil {
+			return "", "", err
+		}
+		instJar := filepath.Join(dir, "loader-installer.jar")
+		a.wizMsg.Set("Downloading the Quilt installer...")
+		if err := download.DownloadFile(ctx, nil, qURL, instJar, nil); err != nil {
+			return "", "", err
+		}
+		a.wizMsg.Set("Running the Quilt installer...")
+		if err := installer.RunQuilt(ctx, "", instJar, dir, ld.MC, ld.Version, progress); err != nil {
+			return "", "", err
+		}
+		_ = os.Remove(instJar)
+		argsDir, jarPath, err := installer.DetectLaunch(dir)
+		if err != nil {
+			return "", "", err
+		}
+		return jarPath, argsDir, nil
+	default:
+		return "", "", fmt.Errorf("unsupported loader %q", ld.Name)
+	}
+}
+
 // wizStartModpackInstall descarga el .mrpack, instala sus archivos y
-// overrides en la instancia nueva y baja el server launcher de Fabric que
-// pide el pack. Solo modpacks Fabric: el server se lanza con un único jar.
+// overrides en la instancia nueva y monta el runtime del loader que pide
+// el pack (Fabric, Forge, NeoForge o Quilt).
 func (a *app) wizStartModpackInstall() {
 	packs, vers := a.wizPacks.Get(), a.wizPackVers.Get()
 	pi, vi := a.wizPackIdx.Get(), a.wizPackVerIdx.Get()
@@ -417,7 +515,7 @@ func (a *app) wizStartModpackInstall() {
 			a.wizFail(gen, err)
 			return
 		}
-		mcVer, loaderVer, err := ix.FabricVersions()
+		ld, err := ix.Loader()
 		if err != nil {
 			a.wizFail(gen, err)
 			return
@@ -443,14 +541,8 @@ func (a *app) wizStartModpackInstall() {
 		}
 		// El .mrpack ya no hace falta; si no se puede borrar no es grave.
 		_ = os.Remove(packFile)
-		a.wizMsg.Set(fmt.Sprintf("Downloading Fabric server launcher (MC %s, loader %s)...", mcVer, loaderVer))
-		fab := &download.Fabric{}
-		jarURL, err := fab.ServerJarURLFor(ctx, mcVer, loaderVer)
+		jarPath, argsDir, err := a.wizInstallLoader(ctx, dir, ld)
 		if err != nil {
-			a.wizFail(gen, err)
-			return
-		}
-		if err := download.DownloadFile(ctx, nil, jarURL, filepath.Join(dir, "server.jar"), nil); err != nil {
 			a.wizFail(gen, err)
 			return
 		}
@@ -462,10 +554,11 @@ func (a *app) wizStartModpackInstall() {
 		inst := config.Instance{
 			Name:     name,
 			Dir:      dir,
-			JarPath:  "server.jar",
+			JarPath:  jarPath,
+			ArgsDir:  argsDir,
 			MemoryMB: memMB,
-			Type:     config.Fabric,
-			Version:  mcVer,
+			Type:     loaderTypes[ld.Name],
+			Version:  ld.MC,
 		}
 		if err := a.store.Add(inst); err != nil {
 			a.wizFail(gen, err)
@@ -480,8 +573,8 @@ func (a *app) wizStartModpackInstall() {
 		a.managers.Update(func(ms []*server.Manager) []*server.Manager {
 			return append(ms, mgr)
 		})
-		a.appendLog(name, fmt.Sprintf("[mc-tui] Modpack installed: %s %s (MC %s, fabric-loader %s, %d MB)",
-			pack.Title, pv.VersionNumber, mcVer, loaderVer, memMB))
+		a.appendLog(name, fmt.Sprintf("[mc-tui] Modpack installed: %s %s (MC %s, %s %s, %d MB)",
+			pack.Title, pv.VersionNumber, ld.MC, ld.Name, ld.Version, memMB))
 		a.selected.Set(len(a.managers.Get()) - 1)
 		a.wizClose()
 	}()

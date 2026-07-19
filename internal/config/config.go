@@ -14,17 +14,24 @@ import (
 type ServerType string
 
 const (
-	Vanilla ServerType = "vanilla"
-	Paper   ServerType = "paper"
-	Purpur  ServerType = "purpur"
-	Fabric  ServerType = "fabric"
+	Vanilla  ServerType = "vanilla"
+	Paper    ServerType = "paper"
+	Purpur   ServerType = "purpur"
+	Fabric   ServerType = "fabric"
+	Forge    ServerType = "forge"
+	NeoForge ServerType = "neoforge"
+	Quilt    ServerType = "quilt"
 )
 
 // Instance describe un servidor Minecraft local registrado en la app.
+// ArgsDir (relativo a Dir) apunta a la carpeta con win_args.txt/unix_args.txt
+// de los servidores Forge/NeoForge modernos, que no se lanzan con -jar;
+// cuando está vacío se usa JarPath.
 type Instance struct {
 	Name     string     `json:"name"`
 	Dir      string     `json:"dir"`
 	JarPath  string     `json:"jar_path"`
+	ArgsDir  string     `json:"args_dir,omitempty"`
 	JavaPath string     `json:"java_path"`
 	JavaArgs []string   `json:"java_args,omitempty"`
 	MemoryMB int        `json:"memory_mb"`

@@ -81,35 +81,35 @@ func TestParseNotAZipFails(t *testing.T) {
 	}
 }
 
-func TestFabricVersions(t *testing.T) {
-	ix := Index{Dependencies: map[string]string{"minecraft": "1.21.4", "fabric-loader": "0.16.9"}}
-	mc, loader, err := ix.FabricVersions()
-	if err != nil {
-		t.Fatalf("FabricVersions: %v", err)
+func TestLoaderDetectsEach(t *testing.T) {
+	cases := []struct {
+		dep, name string
+	}{
+		{"fabric-loader", "fabric"},
+		{"quilt-loader", "quilt"},
+		{"forge", "forge"},
+		{"neoforge", "neoforge"},
 	}
-	if mc != "1.21.4" || loader != "0.16.9" {
-		t.Fatalf("mc=%q loader=%q", mc, loader)
-	}
-}
-
-func TestFabricVersionsRejectsOtherLoaders(t *testing.T) {
-	for _, dep := range []string{"forge", "neoforge", "quilt-loader"} {
-		ix := Index{Dependencies: map[string]string{"minecraft": "1.20.1", dep: "47.0.1"}}
-		_, _, err := ix.FabricVersions()
-		if err == nil || !strings.Contains(err.Error(), dep) {
-			t.Fatalf("pack con %s debe fallar nombrando el loader, err = %v", dep, err)
+	for _, c := range cases {
+		ix := Index{Dependencies: map[string]string{"minecraft": "1.20.1", c.dep: "1.2.3"}}
+		ld, err := ix.Loader()
+		if err != nil {
+			t.Fatalf("Loader con %s: %v", c.dep, err)
+		}
+		if ld.Name != c.name || ld.MC != "1.20.1" || ld.Version != "1.2.3" {
+			t.Fatalf("Loader con %s = %+v", c.dep, ld)
 		}
 	}
 }
 
-func TestFabricVersionsRequiresDeps(t *testing.T) {
+func TestLoaderRequiresDeps(t *testing.T) {
 	ix := Index{Dependencies: map[string]string{"fabric-loader": "0.16.9"}}
-	if _, _, err := ix.FabricVersions(); err == nil {
+	if _, err := ix.Loader(); err == nil {
 		t.Fatal("sin versión de minecraft debe fallar")
 	}
 	ix = Index{Dependencies: map[string]string{"minecraft": "1.21.4"}}
-	if _, _, err := ix.FabricVersions(); err == nil {
-		t.Fatal("sin fabric-loader debe fallar")
+	if _, err := ix.Loader(); err == nil || !strings.Contains(err.Error(), "loader") {
+		t.Fatalf("sin loader debe fallar, err = %v", err)
 	}
 }
 

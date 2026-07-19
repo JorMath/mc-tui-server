@@ -18,11 +18,12 @@ import (
 )
 
 // mrKindsFor devuelve los tipos de contenido de Modrinth instalables en la
-// instancia: mods solo en Fabric (incluidas las creadas desde un modpack),
-// plugins en Paper/Purpur y datapacks en todas — van al mundo, no al loader.
+// instancia: mods en los tipos con loader de mods (incluidas las creadas
+// desde un modpack), plugins en Paper/Purpur y datapacks en todas — van al
+// mundo, no al loader.
 func mrKindsFor(t config.ServerType) []string {
 	switch t {
-	case config.Fabric:
+	case config.Fabric, config.Forge, config.NeoForge, config.Quilt:
 		return []string{"mods", "datapacks"}
 	case config.Paper, config.Purpur:
 		return []string{"plugins", "datapacks"}

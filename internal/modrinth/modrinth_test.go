@@ -216,7 +216,12 @@ func TestSearchModpacksBuildsFacets(t *testing.T) {
 	if gotQuery != "optimized" {
 		t.Fatalf("query = %q", gotQuery)
 	}
-	for _, want := range []string{`"project_type:modpack"`, `"categories:fabric"`, `"server_side:required","server_side:optional"`} {
+	wanted := []string{
+		`"project_type:modpack"`,
+		`"categories:fabric","categories:forge","categories:neoforge","categories:quilt"`,
+		`"server_side:required","server_side:optional"`,
+	}
+	for _, want := range wanted {
 		if !strings.Contains(gotFacets, want) {
 			t.Fatalf("facets %q sin %q", gotFacets, want)
 		}
@@ -231,30 +236,28 @@ func TestSearchModpacksErrorPropagates(t *testing.T) {
 }
 
 func TestModpackVersionsPicksPrimaryMrpack(t *testing.T) {
-	var gotLoaders string
 	srv := versionServer(t, `[
 		{"id":"v1","name":"1.2.0 for 1.21.4","version_number":"1.2.0","version_type":"release",
-		 "game_versions":["1.21.4"],
+		 "game_versions":["1.21.4"],"loaders":["forge"],
 		 "files":[
 			{"url":"https://cdn/x.zip","filename":"extra.zip","primary":false},
 			{"url":"https://cdn/p.mrpack","filename":"pack.mrpack","primary":true}
 		 ]},
 		{"id":"v0","name":"sin archivos","version_number":"1.1.0","version_type":"beta",
-		 "game_versions":["1.21.3"],"files":[]}
-	]`, func(r *http.Request) {
-		gotLoaders = r.URL.Query().Get("loaders")
-	})
+		 "game_versions":["1.21.3"],"loaders":["fabric"],"files":[]}
+	]`, nil)
 	c := &Client{BaseURL: srv.URL}
 	vers, err := c.ModpackVersions(ctx(), "AAAA")
 	if err != nil {
 		t.Fatalf("ModpackVersions: %v", err)
 	}
-	if gotLoaders != `["fabric"]` {
-		t.Fatalf("loaders = %q", gotLoaders)
-	}
-	// La versión sin archivos se descarta; la otra usa el archivo primario.
+	// La versión sin archivos se descarta; la otra usa el archivo primario
+	// y conserva sus loaders.
 	if len(vers) != 1 || vers[0].Filename != "pack.mrpack" || vers[0].VersionNumber != "1.2.0" {
 		t.Fatalf("vers = %+v", vers)
+	}
+	if len(vers[0].Loaders) != 1 || vers[0].Loaders[0] != "forge" {
+		t.Fatalf("loaders = %v", vers[0].Loaders)
 	}
 }
 

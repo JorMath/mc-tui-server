@@ -51,7 +51,7 @@ func PluginsDir(t config.ServerType) (string, bool) {
 	switch t {
 	case config.Paper, config.Purpur:
 		return "plugins", true
-	case config.Fabric:
+	case config.Fabric, config.Forge, config.NeoForge, config.Quilt:
 		return "mods", true
 	default:
 		return "", false

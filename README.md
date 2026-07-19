@@ -20,11 +20,14 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   and delete worlds and plugins/mods safely.
 - **Modrinth** — search content filtered by your instance's loader and game
   version and install it with one key. Each instance only offers what it
-  supports: mods on Fabric, plugins on Paper/Purpur, and datapacks on every
-  type (installed into the active world); `Tab` switches the content type.
-- **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`):
-  the wizard downloads the pack's server files and overrides, plus the
-  Fabric server launcher the pack requires. Fabric modpacks only.
+  supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
+  and datapacks on every type (installed into the active world); `Tab`
+  switches the content type.
+- **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
+  on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
+  pack's server files and overrides, then sets up the loader runtime —
+  Fabric's server launcher directly, or by running the official
+  Forge/NeoForge/Quilt installer (needs Java, which you already have).
 - **Multi-instance** — manage as many local servers as you want; configs
   are stored as JSON in your user config directory. Rename, delete (with
   confirmation) or change the memory of an instance right from the sidebar.
@@ -104,7 +107,7 @@ mc-tui-server -version   # print the version and exit
 | `c` or `Enter` | command bar (send commands to the server) |
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install (mods/plugins/datapacks per instance type; `Tab` switches) |
-| `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a Fabric modpack |
+| `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
 | `M` | change the instance's memory (MB, applies on next start) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |

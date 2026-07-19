@@ -15,13 +15,15 @@ import (
 
 const defaultBase = "https://api.modrinth.com"
 
-// Project es un resultado de búsqueda.
+// Project es un resultado de búsqueda. Categories incluye los loaders del
+// proyecto (fabric, forge, neoforge, quilt) entre otras etiquetas.
 type Project struct {
-	ID          string `json:"project_id"`
-	Slug        string `json:"slug"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-	Downloads   int    `json:"downloads"`
+	ID          string   `json:"project_id"`
+	Slug        string   `json:"slug"`
+	Title       string   `json:"title"`
+	Description string   `json:"description"`
+	Downloads   int      `json:"downloads"`
+	Categories  []string `json:"categories"`
 }
 
 // File es el archivo descargable de la versión elegida de un proyecto.
@@ -45,7 +47,7 @@ func (c *Client) base() string {
 
 // loadersFor mapea el tipo de servidor a los loaders de Modrinth y al
 // project_type a buscar. Los servidores Paper/Purpur cargan plugins de
-// toda la familia Bukkit.
+// toda la familia Bukkit; Quilt carga también mods de Fabric.
 func loadersFor(t config.ServerType) ([]string, string, error) {
 	switch t {
 	case config.Paper:
@@ -54,6 +56,12 @@ func loadersFor(t config.ServerType) ([]string, string, error) {
 		return []string{"purpur", "paper", "spigot", "bukkit"}, "plugin", nil
 	case config.Fabric:
 		return []string{"fabric"}, "mod", nil
+	case config.Forge:
+		return []string{"forge"}, "mod", nil
+	case config.NeoForge:
+		return []string{"neoforge"}, "mod", nil
+	case config.Quilt:
+		return []string{"quilt", "fabric"}, "mod", nil
 	default:
 		return nil, "", fmt.Errorf("server type %q does not support plugins/mods", t)
 	}
@@ -112,13 +120,13 @@ func (c *Client) SearchDatapacks(ctx context.Context, query, gameVersion string)
 	})
 }
 
-// SearchModpacks busca modpacks de Fabric instalables en un servidor
-// (server_side required u optional). Los packs de Forge/NeoForge quedan
-// fuera: el instalador solo soporta el server launcher de Fabric.
+// SearchModpacks busca modpacks instalables en un servidor (server_side
+// required u optional) de cualquier loader soportado: Fabric, Forge,
+// NeoForge o Quilt.
 func (c *Client) SearchModpacks(ctx context.Context, query string) ([]Project, error) {
 	return c.search(ctx, query, [][]string{
 		{"project_type:modpack"},
-		{"categories:fabric"},
+		{"categories:fabric", "categories:forge", "categories:neoforge", "categories:quilt"},
 		{"server_side:required", "server_side:optional"},
 	})
 }
@@ -130,29 +138,28 @@ type PackVersion struct {
 	VersionNumber string
 	VersionType   string
 	GameVersions  []string
+	Loaders       []string
 	URL           string
 	Filename      string
 }
 
-// ModpackVersions lista las versiones Fabric de un modpack, más recientes
-// primero (orden de la API), con el archivo .mrpack de cada una.
+// ModpackVersions lista las versiones de un modpack, más recientes primero
+// (orden de la API), con el archivo .mrpack y los loaders de cada una.
 func (c *Client) ModpackVersions(ctx context.Context, projectID string) ([]PackVersion, error) {
-	params := url.Values{}
-	params.Set("loaders", jsonList([]string{"fabric"}))
-
 	var versions []struct {
 		ID            string   `json:"id"`
 		Name          string   `json:"name"`
 		VersionNumber string   `json:"version_number"`
 		VersionType   string   `json:"version_type"`
 		GameVersions  []string `json:"game_versions"`
+		Loaders       []string `json:"loaders"`
 		Files         []struct {
 			URL      string `json:"url"`
 			Filename string `json:"filename"`
 			Primary  bool   `json:"primary"`
 		} `json:"files"`
 	}
-	endpoint := fmt.Sprintf("%s/v2/project/%s/version?%s", c.base(), projectID, params.Encode())
+	endpoint := fmt.Sprintf("%s/v2/project/%s/version", c.base(), projectID)
 	if err := download.GetJSON(ctx, c.HTTP, endpoint, &versions); err != nil {
 		return nil, err
 	}
@@ -174,12 +181,13 @@ func (c *Client) ModpackVersions(ctx context.Context, projectID string) ([]PackV
 			VersionNumber: v.VersionNumber,
 			VersionType:   v.VersionType,
 			GameVersions:  v.GameVersions,
+			Loaders:       v.Loaders,
 			URL:           chosen.URL,
 			Filename:      chosen.Filename,
 		})
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("modpack %s has no Fabric versions with files", projectID)
+		return nil, fmt.Errorf("modpack %s has no versions with files", projectID)
 	}
 	return out, nil
 }

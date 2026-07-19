@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"time"
 
@@ -31,8 +33,18 @@ const logBuffer = 1024
 // para poder testear sin un java real.
 type CommandFunc func(inst config.Instance) *exec.Cmd
 
-// JavaCommand es la CommandFunc por defecto: java -Xms/-Xmx -jar server.jar nogui
-// ejecutado dentro del directorio de la instancia.
+// argsFileFor devuelve el archivo de argumentos que generan los installers
+// de Forge/NeoForge para el sistema dado.
+func argsFileFor(goos string) string {
+	if goos == "windows" {
+		return "win_args.txt"
+	}
+	return "unix_args.txt"
+}
+
+// JavaCommand es la CommandFunc por defecto, ejecutada dentro del
+// directorio de la instancia: java -Xms/-Xmx -jar server.jar nogui, o para
+// Forge/NeoForge modernos (ArgsDir) java -Xms/-Xmx @<args>.txt nogui.
 func JavaCommand(inst config.Instance) *exec.Cmd {
 	java := inst.JavaPath
 	if java == "" {
@@ -46,7 +58,11 @@ func JavaCommand(inst config.Instance) *exec.Cmd {
 		)
 	}
 	args = append(args, inst.JavaArgs...)
-	args = append(args, "-jar", inst.JarPath, "nogui")
+	if inst.ArgsDir != "" {
+		args = append(args, "@"+filepath.Join(inst.ArgsDir, argsFileFor(runtime.GOOS)), "nogui")
+	} else {
+		args = append(args, "-jar", inst.JarPath, "nogui")
+	}
 	cmd := exec.Command(java, args...)
 	cmd.Dir = inst.Dir
 	return cmd

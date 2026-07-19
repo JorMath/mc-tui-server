@@ -137,7 +137,7 @@ func WizardView(a *app) *WizardViewView {
 		__tui_8.AddChild(__tui_11)
 		__tui_0.AddChild(__tui_8)
 		__tui_12 := tui.New(
-			tui.WithText("Fabric modpacks only — the server runs on the Fabric launcher"),
+			tui.WithText("Server-side modpacks: Fabric, Forge, NeoForge and Quilt"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
 		__tui_0.AddChild(__tui_12)
