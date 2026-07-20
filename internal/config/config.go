@@ -37,6 +37,8 @@ type Instance struct {
 	MemoryMB int        `json:"memory_mb"`
 	Type     ServerType `json:"type"`
 	Version  string     `json:"version"`
+	// AutoRestart reinicia la instancia automáticamente si crashea.
+	AutoRestart bool `json:"auto_restart,omitempty"`
 }
 
 // Store maneja la colección de instancias respaldada por un archivo JSON.

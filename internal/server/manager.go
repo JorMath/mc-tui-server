@@ -23,6 +23,8 @@ const (
 	Stopped  Status = "stopped"
 	Running  Status = "running"
 	Stopping Status = "stopping"
+	// Crashed: el proceso terminó con error sin que nadie pidiera pararlo.
+	Crashed Status = "crashed"
 )
 
 // logBuffer es la capacidad del canal de logs; si el consumidor no lee,
@@ -89,6 +91,9 @@ type Manager struct {
 	stdin  io.WriteCloser
 	exited chan struct{}
 	closed bool
+	// stopRequested distingue un stop pedido (Stop) de un crash: si el
+	// proceso muere con error sin este flag, el estado queda en Crashed.
+	stopRequested bool
 }
 
 // New crea un Manager detenido para la instancia dada.
@@ -112,13 +117,19 @@ func (m *Manager) Instance() config.Instance {
 	return m.inst
 }
 
+// notRunning indica si no hay proceso vivo (detenido o crasheado).
+// El caller debe tener m.mu.
+func (m *Manager) notRunning() bool {
+	return m.status == Stopped || m.status == Crashed
+}
+
 // SetInstance reemplaza la configuración de la instancia (p.ej. tras un
 // rename). Solo se permite con el servidor detenido para no desincronizar
 // el proceso en marcha.
 func (m *Manager) SetInstance(inst config.Instance) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status != Stopped {
+	if !m.notRunning() {
 		return fmt.Errorf("server %q is %s; stop it first", m.inst.Name, m.status)
 	}
 	m.inst = inst
@@ -131,7 +142,7 @@ func (m *Manager) SetInstance(inst config.Instance) error {
 func (m *Manager) Close() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status != Stopped {
+	if !m.notRunning() {
 		return fmt.Errorf("server %q is %s; stop it first", m.inst.Name, m.status)
 	}
 	if !m.closed {
@@ -155,7 +166,7 @@ func (m *Manager) Status() Status {
 func (m *Manager) PID() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status == Stopped {
+	if m.notRunning() {
 		return 0
 	}
 	return m.cmd.Process.Pid
@@ -165,9 +176,10 @@ func (m *Manager) PID() int {
 func (m *Manager) Start() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.status != Stopped {
+	if !m.notRunning() {
 		return fmt.Errorf("server %q is already %s", m.inst.Name, m.status)
 	}
+	m.stopRequested = false
 
 	cmd := m.newCmd(m.inst)
 	stdin, err := cmd.StdinPipe()
@@ -202,9 +214,15 @@ func (m *Manager) Start() error {
 	go func() {
 		// Los lectores deben terminar antes de Wait (contrato de os/exec).
 		readers.Wait()
-		_ = cmd.Wait()
+		err := cmd.Wait()
 		m.mu.Lock()
-		m.status = Stopped
+		// Salida con error sin stop pedido = crash (un /stop desde el juego
+		// o un Stop() nuestro terminan con código 0 o con stopRequested).
+		if err != nil && !m.stopRequested {
+			m.status = Crashed
+		} else {
+			m.status = Stopped
+		}
 		m.mu.Unlock()
 		close(exited)
 	}()
@@ -235,6 +253,7 @@ func (m *Manager) Stop(timeout time.Duration) error {
 		return fmt.Errorf("server %q is not running", m.inst.Name)
 	}
 	m.status = Stopping
+	m.stopRequested = true
 	stdin, cmd, exited := m.stdin, m.cmd, m.exited
 	m.mu.Unlock()
 

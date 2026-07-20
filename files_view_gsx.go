@@ -127,15 +127,33 @@ func FilesView(a *app) *FilesViewView {
 		)
 		__tui_2.AddChild(__tui_11)
 	}
+	__tui_12 := tui.New(
+		tui.WithText("4"),
+		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+	)
+	__tui_2.AddChild(__tui_12)
+	if a.fmTab.Get() == 3 {
+		__tui_13 := tui.New(
+			tui.WithText("Backups"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+		)
+		__tui_2.AddChild(__tui_13)
+	} else {
+		__tui_14 := tui.New(
+			tui.WithText("Backups"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_2.AddChild(__tui_14)
+	}
 	__tui_0.AddChild(__tui_2)
 	if len(a.fmItems()) == 0 {
-		__tui_12 := tui.New(
+		__tui_15 := tui.New(
 			tui.WithText("(empty)"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_0.AddChild(__tui_12)
+		__tui_0.AddChild(__tui_15)
 	}
-	__tui_13 := tui.New(
+	__tui_16 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		tui.WithFlexGrow(1),
 		tui.WithScrollable(tui.ScrollVertical),
@@ -144,72 +162,79 @@ func FilesView(a *app) *FilesViewView {
 	for __idx_0, item := range a.fmItems() {
 		_ = __idx_0
 		if item.Sel {
-			__tui_14 := tui.New(
+			__tui_17 := tui.New(
 				tui.WithText(fmt.Sprintf("> %s", item.Text)),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_13.AddChild(__tui_14)
+			__tui_16.AddChild(__tui_17)
 		} else {
-			__tui_15 := tui.New(
+			__tui_18 := tui.New(
 				tui.WithText(fmt.Sprintf("  %s", item.Text)),
 			)
-			__tui_13.AddChild(__tui_15)
+			__tui_16.AddChild(__tui_18)
 		}
 	}
-	__tui_0.AddChild(__tui_13)
+	__tui_0.AddChild(__tui_16)
 	if a.fmEditing.Get() {
-		__tui_16 := tui.New(
+		__tui_19 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_17 := tui.New(
+		__tui_20 := tui.New(
 			tui.WithText(fmt.Sprintf("%s =", a.fmSelectedKey())),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_16.AddChild(__tui_17)
-		__tui_18 := tui.New(
+		__tui_19.AddChild(__tui_20)
+		__tui_21 := tui.New(
 			tui.WithText(a.fmEditText.Get()),
 		)
-		__tui_16.AddChild(__tui_18)
-		__tui_19 := tui.New(
+		__tui_19.AddChild(__tui_21)
+		__tui_22 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_16.AddChild(__tui_19)
-		__tui_20 := tui.New(
+		__tui_19.AddChild(__tui_22)
+		__tui_23 := tui.New(
 			tui.WithText("(Enter applies | Esc cancels)"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_16.AddChild(__tui_20)
-		__tui_0.AddChild(__tui_16)
+		__tui_19.AddChild(__tui_23)
+		__tui_0.AddChild(__tui_19)
 	}
 	if a.fmConfirm.Get() != "" {
-		__tui_21 := tui.New(
+		__tui_24 := tui.New(
 			tui.WithText(fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
 		)
-		__tui_0.AddChild(__tui_21)
+		__tui_0.AddChild(__tui_24)
+	}
+	if a.fmRestore.Get() != "" {
+		__tui_25 := tui.New(
+			tui.WithText(fmt.Sprintf("Restore %q? The current world will be REPLACED (y = yes, n = no)", a.fmRestore.Get())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_0.AddChild(__tui_25)
 	}
 	if a.fmMsg.Get() != "" {
-		__tui_22 := tui.New(
+		__tui_26 := tui.New(
 			tui.WithText(a.fmMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_22)
+		__tui_0.AddChild(__tui_26)
 	}
-	__tui_23 := HintsRow(a.fmHints(), false)
-	__tui_0.AddChild(__tui_23.Root)
+	__tui_27 := HintsRow(a.fmHints(), false)
+	__tui_0.AddChild(__tui_27.Root)
 
-	watchers = append(watchers, __tui_23.GetWatchers()...)
+	watchers = append(watchers, __tui_27.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_23).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_27).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_23).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_27).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}

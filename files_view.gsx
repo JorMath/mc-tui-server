@@ -29,6 +29,12 @@ templ FilesView(a *app) {
 			} else {
 				<span class="font-dim">Plugins/Mods</span>
 			}
+			<span class="text-cyan font-bold">4</span>
+			if a.fmTab.Get() == 3 {
+				<span class="text-cyan">Backups</span>
+			} else {
+				<span class="font-dim">Backups</span>
+			}
 		</div>
 		if len(a.fmItems()) == 0 {
 			<span class="font-dim">(empty)</span>
@@ -56,6 +62,9 @@ templ FilesView(a *app) {
 		}
 		if a.fmConfirm.Get() != "" {
 			<span class="text-red font-bold">{fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())}</span>
+		}
+		if a.fmRestore.Get() != "" {
+			<span class="text-red font-bold">{fmt.Sprintf("Restore %q? The current world will be REPLACED (y = yes, n = no)", a.fmRestore.Get())}</span>
 		}
 		if a.fmMsg.Get() != "" {
 			<span class="text-yellow">{a.fmMsg.Get()}</span>

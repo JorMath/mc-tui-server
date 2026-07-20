@@ -3,6 +3,7 @@ package modrinth
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -350,5 +351,47 @@ func TestServerUnsupportedErrorPropagates(t *testing.T) {
 	c := &Client{BaseURL: "http://127.0.0.1:1"}
 	if _, err := c.ServerUnsupported(ctx(), []string{"AAAA"}); err == nil {
 		t.Fatal("ServerUnsupported contra servidor inexistente debe fallar")
+	}
+}
+
+func TestLatestByHash(t *testing.T) {
+	var gotBody string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/version_files/update", func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		fmt.Fprint(w, `{
+			"aaa111":{"files":[{"url":"https://cdn/new.jar","filename":"new.jar","primary":true,"hashes":{"sha1":"bbb222"}}]},
+			"ccc333":{"files":[{"url":"https://cdn/same.jar","filename":"same.jar","primary":true,"hashes":{"sha1":"ccc333"}}]}
+		}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Client{BaseURL: srv.URL}
+	latest, err := c.LatestByHash(ctx(), config.Forge, "1.20.1", []string{"aaa111", "ccc333", "desconocido"})
+	if err != nil {
+		t.Fatalf("LatestByHash: %v", err)
+	}
+	for _, want := range []string{`"algorithm":"sha1"`, `"forge"`, `"1.20.1"`, `"aaa111"`} {
+		if !strings.Contains(gotBody, want) {
+			t.Fatalf("body %q sin %q", gotBody, want)
+		}
+	}
+	// aaa111 tiene versión nueva (sha1 distinto); ccc333 está al día.
+	if f := latest["aaa111"]; f.Filename != "new.jar" || f.SHA1 != "bbb222" {
+		t.Fatalf("aaa111 = %+v", f)
+	}
+	if f := latest["ccc333"]; f.SHA1 != "ccc333" {
+		t.Fatalf("ccc333 = %+v", f)
+	}
+	if _, ok := latest["desconocido"]; ok {
+		t.Fatal("hash desconocido no debe aparecer")
+	}
+}
+
+func TestLatestByHashVanillaFails(t *testing.T) {
+	c := &Client{BaseURL: "http://x"}
+	if _, err := c.LatestByHash(ctx(), config.Vanilla, "1.20.1", []string{"a"}); err == nil {
+		t.Fatal("vanilla no tiene loaders de mods; debe fallar")
 	}
 }

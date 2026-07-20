@@ -188,13 +188,13 @@ func Sidebar(a *app) *SidebarView {
 		)
 		if i == a.selected.Get() {
 			__tui_6 := tui.New(
-				tui.WithText(fmt.Sprintf("> %s", mgr.Instance().Name)),
+				tui.WithText(fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
 			__tui_5.AddChild(__tui_6)
 		} else {
 			__tui_7 := tui.New(
-				tui.WithText(fmt.Sprintf("  %s", mgr.Instance().Name)),
+				tui.WithText(fmt.Sprintf("  %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))),
 			)
 			__tui_5.AddChild(__tui_7)
 		}
@@ -210,20 +210,33 @@ func Sidebar(a *app) *SidebarView {
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 			)
 			__tui_5.AddChild(__tui_9)
-		} else {
+		} else if a.statusText(mgr.Instance().Name) == string(server.Crashed) {
 			__tui_10 := tui.New(
+				tui.WithText(a.statusText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			)
+			__tui_5.AddChild(__tui_10)
+		} else {
+			__tui_11 := tui.New(
 				tui.WithText(a.statusText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_5.AddChild(__tui_10)
+			__tui_5.AddChild(__tui_11)
 		}
 		__tui_4.AddChild(__tui_5)
 		if a.metricText(mgr.Instance().Name) != "" {
-			__tui_11 := tui.New(
+			__tui_12 := tui.New(
 				tui.WithText(a.metricText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_4.AddChild(__tui_11)
+			__tui_4.AddChild(__tui_12)
+		}
+		if a.playersText(mgr.Instance().Name) != "" {
+			__tui_13 := tui.New(
+				tui.WithText(a.playersText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
+			)
+			__tui_4.AddChild(__tui_13)
 		}
 		__tui_0.AddChild(__tui_4)
 	}

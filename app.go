@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/mcping"
 	"github.com/JorMath/mc-tui-server/internal/metrics"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	"github.com/JorMath/mc-tui-server/internal/properties"
@@ -106,8 +107,12 @@ type app struct {
 
 	collector *metrics.Collector
 	samples   *tui.State[map[string]metrics.Sample]
-	// lastPIDs solo se toca desde el timer de refresh (una goroutine).
-	lastPIDs map[string]int
+	// pings guarda el server-list-ping de las instancias corriendo.
+	pings *tui.State[map[string]mcping.Status]
+	// lastPIDs, crashTimes y pingTick solo se tocan desde el timer de refresh.
+	lastPIDs   map[string]int
+	crashTimes map[string][]time.Time
+	pingTick   int
 
 	// Estado del asistente. wizGen invalida goroutines de un asistente
 	// cancelado para que no re-abran la UI.
@@ -143,6 +148,11 @@ type app struct {
 	fmPluginIdx *tui.State[int]
 	fmConfirm   *tui.State[string]
 	fmMsg       *tui.State[string]
+	// Backups de mundos (v0.2.0). fmRestore guarda el zip pendiente de
+	// confirmar restauración ("" = sin diálogo).
+	fmBackups   *tui.State[[]string]
+	fmBackupIdx *tui.State[int]
+	fmRestore   *tui.State[string]
 
 	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
 	// cerrado, igual que wizGen. mrKind es el tipo de contenido activo
@@ -168,26 +178,28 @@ func App(store *config.Store, managers []*server.Manager) *app {
 	}
 	var reg []tui.AppBinder
 	a := &app{
-		store:     store,
-		dataDir:   filepath.Dir(store.Path()),
-		managers:  newState(&reg, managers),
-		splash:    newState(&reg, true),
-		logCh:     make(chan logEntry, 2048),
-		selected:  newState(&reg, 0),
-		statuses:  newState(&reg, statuses),
-		logs:      newState(&reg, logs),
-		cmdActive: newState(&reg, false),
-		cmdText:   newState(&reg, ""),
-		renActive: newState(&reg, false),
-		renText:   newState(&reg, ""),
-		renMsg:    newState(&reg, ""),
-		delTarget: newState(&reg, ""),
-		memActive: newState(&reg, false),
-		memText:   newState(&reg, ""),
-		memMsg:    newState(&reg, ""),
-		collector: metrics.NewCollector(),
-		samples:   newState(&reg, map[string]metrics.Sample{}),
-		lastPIDs:  map[string]int{},
+		store:      store,
+		dataDir:    filepath.Dir(store.Path()),
+		managers:   newState(&reg, managers),
+		splash:     newState(&reg, true),
+		logCh:      make(chan logEntry, 2048),
+		selected:   newState(&reg, 0),
+		statuses:   newState(&reg, statuses),
+		logs:       newState(&reg, logs),
+		cmdActive:  newState(&reg, false),
+		cmdText:    newState(&reg, ""),
+		renActive:  newState(&reg, false),
+		renText:    newState(&reg, ""),
+		renMsg:     newState(&reg, ""),
+		delTarget:  newState(&reg, ""),
+		memActive:  newState(&reg, false),
+		memText:    newState(&reg, ""),
+		memMsg:     newState(&reg, ""),
+		collector:  metrics.NewCollector(),
+		samples:    newState(&reg, map[string]metrics.Sample{}),
+		pings:      newState(&reg, map[string]mcping.Status{}),
+		lastPIDs:   map[string]int{},
+		crashTimes: map[string][]time.Time{},
 
 		wizStep:     newState(&reg, wizOff),
 		wizGen:      newState(&reg, 0),
@@ -218,6 +230,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmPluginIdx: newState(&reg, 0),
 		fmConfirm:   newState(&reg, ""),
 		fmMsg:       newState(&reg, ""),
+		fmBackups:   newState(&reg, []string{}),
+		fmBackupIdx: newState(&reg, 0),
+		fmRestore:   newState(&reg, ""),
 
 		mr:        &modrinth.Client{},
 		mrKind:    newState(&reg, ""),
@@ -368,8 +383,8 @@ func (a *app) mainHints() []hint {
 	}
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
-		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"},
-		{"n", "new"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
+		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"b", "backup"},
+		{"n", "new"}, {"a", "auto-restart"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
 	}
 }
 
@@ -419,6 +434,8 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
 		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
 		tui.On(tui.Rune('M'), func(ke tui.KeyEvent) { a.memOpen() }),
+		tui.On(tui.Rune('a'), func(ke tui.KeyEvent) { a.toggleAutoRestart() }),
+		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),

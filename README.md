@@ -10,7 +10,14 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 ## Features
 
 - **Lifecycle** — start, stop (graceful `stop` + kill fallback) and restart
-  instances with one key.
+  instances with one key. Crashes are detected (shown in red) and, with
+  auto-restart enabled per instance (`a`), the server restarts itself after
+  5s — giving up after 3 crashes in 10 minutes. Starting also checks that
+  your Java is new enough for the instance's Minecraft version.
+- **Players online** — running instances are pinged via the server-list
+  protocol every 5s; the sidebar shows `players N/M` next to CPU/RAM.
+- **World backups** — `b` zips the active world into `backups/` with a
+  timestamp; the file manager's Backups tab restores or deletes them.
 - **Interactive console** — live server log with a command bar to send
   commands straight to the server's stdin.
 - **Metrics** — per-instance CPU and RAM usage refreshed every 500ms.
@@ -24,7 +31,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   version and install it with one key. Each instance only offers what it
   supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
   and datapacks on every type (installed into the active world); `Tab`
-  switches the content type.
+  switches the content type. Press `u` to update every installed mod or
+  plugin to its latest compatible version (matched by file hash).
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
@@ -111,6 +119,8 @@ mc-tui-server -version   # print the version and exit
 | `m` | Modrinth search & install (mods/plugins/datapacks per instance type; `Tab` switches) |
 | `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
 | `M` | change the instance's memory (MB, applies on next start) |
+| `a` | toggle auto-restart on crash for the instance (shown as `↻`) |
+| `b` | back up the active world into `backups/` (server must be stopped) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
 | `q` | quit (running servers are stopped gracefully) |

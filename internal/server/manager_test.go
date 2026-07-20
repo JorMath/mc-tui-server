@@ -29,6 +29,9 @@ func TestHelperProcess(t *testing.T) {
 	case "exit":
 		// Termina inmediatamente por su cuenta.
 		return
+	case "crash":
+		// Muere con código de error, como un servidor crasheado.
+		os.Exit(3)
 	case "stubborn":
 		// Ignora "stop": hay que matarlo.
 		time.Sleep(30 * time.Second)
@@ -63,11 +66,23 @@ func newTestManager(t *testing.T, mode string) *Manager {
 	t.Helper()
 	m := New(config.Instance{Name: "test"}, WithCommand(helperCommand(mode)))
 	t.Cleanup(func() {
-		if m.Status() != Stopped {
+		if m.Status() == Running || m.Status() == Stopping {
 			_ = m.Stop(2 * time.Second)
 		}
 	})
 	return m
+}
+
+// waitStatus espera hasta que el manager llegue al estado dado.
+func waitStatus(t *testing.T, m *Manager, want Status) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for m.Status() != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("status = %s, esperaba %s", m.Status(), want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 // waitForLog espera hasta encontrar una línea que contenga want.
@@ -425,5 +440,42 @@ func TestArgsFileFor(t *testing.T) {
 	}
 	if got := argsFileFor("linux"); got != "unix_args.txt" {
 		t.Fatalf("linux = %q", got)
+	}
+}
+
+func TestCrashDetection(t *testing.T) {
+	m := newTestManager(t, "crash")
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	waitStatus(t, m, Crashed)
+	// Un manager crasheado puede volver a arrancarse.
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start tras crash: %v", err)
+	}
+	waitStatus(t, m, Crashed)
+}
+
+func TestSelfExitZeroIsStopped(t *testing.T) {
+	m := newTestManager(t, "exit")
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// Salida limpia (código 0) sin stop pedido no es un crash.
+	waitStatus(t, m, Stopped)
+}
+
+func TestStopIsNotCrash(t *testing.T) {
+	m := newTestManager(t, "stubborn")
+	if err := m.Start(); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	// El kill por timeout termina el proceso con error, pero fue un stop
+	// pedido: el estado final debe ser Stopped, no Crashed.
+	if err := m.Stop(200 * time.Millisecond); err != nil {
+		t.Fatalf("Stop: %v", err)
+	}
+	if got := m.Status(); got != Stopped {
+		t.Fatalf("status tras Stop = %s, quiero stopped", got)
 	}
 }

@@ -27,9 +27,11 @@ type Project struct {
 }
 
 // File es el archivo descargable de la versión elegida de un proyecto.
+// SHA1 solo se llena en las consultas por hash (LatestByHash).
 type File struct {
 	URL      string `json:"url"`
 	Filename string `json:"filename"`
+	SHA1     string `json:"-"`
 }
 
 // Client habla con la API de Modrinth. BaseURL vacío usa la oficial.
@@ -226,6 +228,53 @@ func (c *Client) latestFile(ctx context.Context, projectID string, loaders []str
 		}
 	}
 	return File{URL: chosen.URL, Filename: chosen.Filename}, nil
+}
+
+// LatestByHash consulta, para cada sha1 de un archivo local, la última
+// versión del proyecto compatible con el loader y la versión del juego
+// (POST /v2/version_files/update). Devuelve hash local → archivo primario
+// de esa última versión; si el sha1 del resultado coincide con la clave,
+// el archivo ya está al día. Hashes desconocidos no aparecen en el mapa.
+func (c *Client) LatestByHash(ctx context.Context, t config.ServerType, gameVersion string, hashes []string) (map[string]File, error) {
+	loaders, _, err := loadersFor(t)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]any{
+		"hashes":        hashes,
+		"algorithm":     "sha1",
+		"loaders":       loaders,
+		"game_versions": []string{gameVersion},
+	}
+	var resp map[string]struct {
+		Files []struct {
+			URL      string `json:"url"`
+			Filename string `json:"filename"`
+			Primary  bool   `json:"primary"`
+			Hashes   struct {
+				SHA1 string `json:"sha1"`
+			} `json:"hashes"`
+		} `json:"files"`
+	}
+	endpoint := c.base() + "/v2/version_files/update"
+	if err := download.PostJSON(ctx, c.HTTP, endpoint, body, &resp); err != nil {
+		return nil, err
+	}
+	out := map[string]File{}
+	for hash, version := range resp {
+		if len(version.Files) == 0 {
+			continue
+		}
+		chosen := version.Files[0]
+		for _, f := range version.Files {
+			if f.Primary {
+				chosen = f
+				break
+			}
+		}
+		out[hash] = File{URL: chosen.URL, Filename: chosen.Filename, SHA1: chosen.Hashes.SHA1}
+	}
+	return out, nil
 }
 
 // ServerUnsupported consulta en lote los proyectos dados y devuelve el

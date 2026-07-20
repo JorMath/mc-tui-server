@@ -4,6 +4,7 @@
 package download
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -66,6 +67,32 @@ func GetJSON(ctx context.Context, client *http.Client, url string, v any) error 
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
+		return fmt.Errorf("parsing response from %s: %w", url, err)
+	}
+	return nil
+}
+
+// PostJSON hace POST a url con body serializado como JSON y decodifica la
+// respuesta en v.
+func PostJSON(ctx context.Context, client *http.Client, url string, body, v any) error {
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("encoding request to %s: %w", url, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("creating request to %s: %w", url, err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := orDefault(client).Do(req)
+	if err != nil {
+		return fmt.Errorf("fetching %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("POST %s: HTTP %d", url, resp.StatusCode)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		return fmt.Errorf("parsing response from %s: %w", url, err)

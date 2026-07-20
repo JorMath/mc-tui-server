@@ -40,20 +40,25 @@ templ Sidebar(a *app) {
 			<div class="flex-col">
 				<div class="flex justify-between">
 					if i == a.selected.Get() {
-						<span class="font-bold text-cyan">{fmt.Sprintf("> %s", mgr.Instance().Name)}</span>
+						<span class="font-bold text-cyan">{fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
 					} else {
-						<span>{fmt.Sprintf("  %s", mgr.Instance().Name)}</span>
+						<span>{fmt.Sprintf("  %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
 					}
 					if a.statusText(mgr.Instance().Name) == string(server.Running) {
 						<span class="text-green">{a.statusText(mgr.Instance().Name)}</span>
 					} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
 						<span class="text-yellow">{a.statusText(mgr.Instance().Name)}</span>
+					} else if a.statusText(mgr.Instance().Name) == string(server.Crashed) {
+						<span class="text-red font-bold">{a.statusText(mgr.Instance().Name)}</span>
 					} else {
 						<span class="font-dim">{a.statusText(mgr.Instance().Name)}</span>
 					}
 				</div>
 				if a.metricText(mgr.Instance().Name) != "" {
 					<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
+				}
+				if a.playersText(mgr.Instance().Name) != "" {
+					<span class="text-green">{a.playersText(mgr.Instance().Name)}</span>
 				}
 			</div>
 		}

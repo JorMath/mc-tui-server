@@ -4,7 +4,11 @@ package main
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"strconv"
 	"time"
@@ -13,7 +17,6 @@ import (
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
-	"github.com/JorMath/mc-tui-server/internal/properties"
 	tui "github.com/grindlemire/go-tui"
 )
 
@@ -84,7 +87,16 @@ func (a *app) mrClose() {
 func (a *app) mrSearch() {
 	mgr := a.current()
 	query := a.mrQuery.Get()
-	if mgr == nil || query == "" || a.mrBusy.Get() {
+	if mgr == nil || a.mrBusy.Get() {
+		return
+	}
+	// Enter con la búsqueda vacía sale del modo escritura: deja a mano
+	// los atajos de lista como u (update all) sin exigir una búsqueda.
+	if query == "" {
+		a.mrTyping.Set(false)
+		if a.mrKind.Get() != "datapacks" {
+			a.mrMsg.Set("u checks for updates · / starts a search")
+		}
 		return
 	}
 	inst := mgr.Instance()
@@ -122,16 +134,10 @@ func (a *app) mrSearch() {
 }
 
 // datapacksDir devuelve la carpeta de datapacks (relativa a la instancia)
-// del mundo activo según level-name de server.properties, "world" por
-// defecto. Minecraft la carga aunque se cree antes del primer arranque.
+// del mundo activo. Minecraft la carga aunque se cree antes del primer
+// arranque.
 func datapacksDir(inst config.Instance) string {
-	world := "world"
-	if props, err := properties.Load(filepath.Join(inst.Dir, "server.properties")); err == nil {
-		if v, ok := props.Get("level-name"); ok && v != "" {
-			world = v
-		}
-	}
-	return filepath.Join(world, "datapacks")
+	return filepath.Join(worldName(inst), "datapacks")
 }
 
 func (a *app) mrInstall() {
@@ -195,6 +201,100 @@ func (a *app) mrInstall() {
 	}()
 }
 
+// sha1Of calcula el sha1 en hex de un archivo.
+func sha1Of(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := sha1.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// mrUpdateAll (tecla u) compara los mods/plugins instalados contra
+// Modrinth por hash y descarga las versiones nuevas, borrando los
+// archivos viejos. Los archivos que Modrinth no reconoce se dejan igual.
+func (a *app) mrUpdateAll() {
+	mgr := a.current()
+	if mgr == nil || a.mrBusy.Get() || a.mrKind.Get() == "datapacks" {
+		return
+	}
+	inst := mgr.Instance()
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set("Checking installed files for updates...")
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		dir := filepath.Join(inst.Dir, sub)
+		names, err := assets.Plugins(inst.Dir, inst.Type)
+		if err == nil && len(names) == 0 {
+			err = fmt.Errorf("no files in %s/ to update", sub)
+		}
+		byHash := map[string]string{}
+		var hashes []string
+		if err == nil {
+			for _, n := range names {
+				h, hashErr := sha1Of(filepath.Join(dir, n))
+				if hashErr != nil {
+					err = hashErr
+					break
+				}
+				byHash[h] = n
+				hashes = append(hashes, h)
+			}
+		}
+		var latest map[string]modrinth.File
+		if err == nil {
+			latest, err = a.mr.LatestByHash(ctx, inst.Type, inst.Version, hashes)
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		if err != nil {
+			a.mrBusy.Set(false)
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		updated, current, unknown := 0, 0, 0
+		for hash, oldName := range byHash {
+			file, ok := latest[hash]
+			if !ok {
+				unknown++
+				continue
+			}
+			if file.SHA1 == hash {
+				current++
+				continue
+			}
+			a.mrMsg.Set(fmt.Sprintf("Updating %s → %s...", oldName, file.Filename))
+			if err := download.DownloadFile(ctx, nil, file.URL, filepath.Join(dir, file.Filename), nil); err != nil {
+				a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Update of %s failed: %s", oldName, err))
+				continue
+			}
+			if file.Filename != oldName {
+				_ = os.Remove(filepath.Join(dir, oldName))
+			}
+			a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Updated %s → %s", oldName, file.Filename))
+			updated++
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		a.mrMsg.Set(fmt.Sprintf("Updates done: %d updated, %d already current, %d not on Modrinth · restart to apply",
+			updated, current, unknown))
+	}()
+}
+
 // mrDownloadsText formatea el contador de descargas (9000 → 9.0k).
 func mrDownloadsText(n int) string {
 	switch {
@@ -251,6 +351,9 @@ func (a *app) mrHints() []hint {
 		hints = []hint{{"Enter", "search"}}
 	} else {
 		hints = []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}}
+		if a.mrKind.Get() != "datapacks" {
+			hints = append(hints, hint{"u", "update all"})
+		}
 	}
 	if a.mrHasKinds() {
 		hints = append(hints, hint{"Tab", "switch type"})
@@ -287,6 +390,7 @@ func (a *app) mrKeyMap() tui.KeyMap {
 		tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMove(10) }),
 		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
 		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
+		tui.OnStop(tui.Rune('u'), func(ke tui.KeyEvent) { a.mrUpdateAll() }),
 		tab,
 		esc,
 	}
