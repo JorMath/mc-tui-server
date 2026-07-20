@@ -9,20 +9,23 @@ import (
 )
 
 // HintsRow pinta una fila de atajos: tecla en color + etiqueta dim.
-// Las clases deben ser literales (go-tui ignora class dinámica), de ahí
-// el flag green en lugar de un color parametrizado.
+// flex-wrap parte la fila en varias líneas cuando la terminal es angosta,
+// para que ningún atajo quede cortado. Las clases deben ser literales
+// (go-tui ignora class dinámica), de ahí el flag green.
 templ HintsRow(hints []hint, green bool) {
-	<div class="flex gap-1 shrink-0">
+	<div class="flex flex-wrap gap-1 shrink-0">
 		for i, h := range hints {
-			if i > 0 {
-				<span class="font-dim">|</span>
-			}
-			if green {
-				<span class="text-green font-bold">{h.K}</span>
-			} else {
-				<span class="text-cyan font-bold">{h.K}</span>
-			}
-			<span class="font-dim">{h.L}</span>
+			<div class="flex gap-1">
+				if i > 0 {
+					<span class="font-dim">|</span>
+				}
+				if green {
+					<span class="text-green font-bold">{h.K}</span>
+				} else {
+					<span class="text-cyan font-bold">{h.K}</span>
+				}
+				<span class="font-dim">{h.L}</span>
+			</div>
 		}
 	</div>
 }

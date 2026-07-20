@@ -167,6 +167,10 @@ type app struct {
 	mrBusy    *tui.State[bool]
 	mrGen     *tui.State[int]
 	mrMsg     *tui.State[string]
+	// Confirmación de update-all: mrPending se escribe antes de encender
+	// mrUpd (el mutex del State ordena la publicación) y se lee al aplicar.
+	mrUpd     *tui.State[bool]
+	mrPending []pendingUpdate
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -244,6 +248,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		mrBusy:    newState(&reg, false),
 		mrGen:     newState(&reg, 0),
 		mrMsg:     newState(&reg, ""),
+		mrUpd:     newState(&reg, false),
 	}
 	a.binders = reg
 	for _, m := range managers {
@@ -372,15 +377,9 @@ func (a *app) appendLog(name, line string) {
 	})
 }
 
+// mainHints devuelve todos los atajos globales; HintsRow los envuelve en
+// varias líneas si no caben a lo ancho.
 func (a *app) mainHints() []hint {
-	// En terminales angostas la fila completa no cabe: se muestran solo
-	// los atajos esenciales para que el footer no desborde.
-	if w, _ := a.termSize(); w < 96 {
-		return []hint{
-			{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"},
-			{"n", "new"}, {"m", "modrinth"}, {"q", "quit"},
-		}
-	}
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"b", "backup"},

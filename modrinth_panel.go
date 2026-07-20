@@ -47,6 +47,8 @@ func (a *app) mrOpenPanel() {
 	a.mrIdx.Set(0)
 	a.mrBusy.Set(false)
 	a.mrMsg.Set("")
+	a.mrPending = nil
+	a.mrUpd.Set(false)
 	a.mrTyping.Set(true)
 	a.mrOpen.Set(true)
 }
@@ -215,9 +217,15 @@ func sha1Of(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// pendingUpdate es una actualización encontrada, a la espera de confirmar.
+type pendingUpdate struct {
+	Old  string
+	File modrinth.File
+}
+
 // mrUpdateAll (tecla u) compara los mods/plugins instalados contra
-// Modrinth por hash y descarga las versiones nuevas, borrando los
-// archivos viejos. Los archivos que Modrinth no reconoce se dejan igual.
+// Modrinth por hash y, si hay versiones nuevas, pide confirmación antes
+// de descargar nada. Los archivos que Modrinth no reconoce se dejan igual.
 func (a *app) mrUpdateAll() {
 	mgr := a.current()
 	if mgr == nil || a.mrBusy.Get() || a.mrKind.Get() == "datapacks" {
@@ -232,7 +240,7 @@ func (a *app) mrUpdateAll() {
 	a.mrBusy.Set(true)
 	a.mrMsg.Set("Checking installed files for updates...")
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		dir := filepath.Join(inst.Dir, sub)
 		names, err := assets.Plugins(inst.Dir, inst.Type)
@@ -259,39 +267,75 @@ func (a *app) mrUpdateAll() {
 		if a.mrGen.Get() != gen {
 			return
 		}
+		a.mrBusy.Set(false)
 		if err != nil {
-			a.mrBusy.Set(false)
 			a.mrMsg.Set("Error: " + err.Error())
 			return
 		}
-		updated, current, unknown := 0, 0, 0
+		var pending []pendingUpdate
+		current, unknown := 0, 0
 		for hash, oldName := range byHash {
 			file, ok := latest[hash]
-			if !ok {
+			switch {
+			case !ok:
 				unknown++
-				continue
-			}
-			if file.SHA1 == hash {
+			case file.SHA1 == hash:
 				current++
+			default:
+				pending = append(pending, pendingUpdate{Old: oldName, File: file})
+			}
+		}
+		if len(pending) == 0 {
+			a.mrMsg.Set(fmt.Sprintf("Everything up to date (%d current, %d not on Modrinth)", current, unknown))
+			return
+		}
+		a.mrPending = pending
+		a.mrUpd.Set(true)
+		a.mrMsg.Set(fmt.Sprintf("%d updates available (%d current, %d not on Modrinth) — update now?",
+			len(pending), current, unknown))
+	}()
+}
+
+// mrApplyUpdates descarga las actualizaciones confirmadas y borra los
+// archivos viejos.
+func (a *app) mrApplyUpdates() {
+	mgr := a.current()
+	pending := a.mrPending
+	a.mrPending = nil
+	a.mrUpd.Set(false)
+	if mgr == nil || len(pending) == 0 {
+		return
+	}
+	inst := mgr.Instance()
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		dir := filepath.Join(inst.Dir, sub)
+		updated := 0
+		for _, u := range pending {
+			a.mrMsg.Set(fmt.Sprintf("Updating %s → %s...", u.Old, u.File.Filename))
+			if err := download.DownloadFile(ctx, nil, u.File.URL, filepath.Join(dir, u.File.Filename), nil); err != nil {
+				a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Update of %s failed: %s", u.Old, err))
 				continue
 			}
-			a.mrMsg.Set(fmt.Sprintf("Updating %s → %s...", oldName, file.Filename))
-			if err := download.DownloadFile(ctx, nil, file.URL, filepath.Join(dir, file.Filename), nil); err != nil {
-				a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Update of %s failed: %s", oldName, err))
-				continue
+			if u.File.Filename != u.Old {
+				_ = os.Remove(filepath.Join(dir, u.Old))
 			}
-			if file.Filename != oldName {
-				_ = os.Remove(filepath.Join(dir, oldName))
-			}
-			a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Updated %s → %s", oldName, file.Filename))
+			a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Updated %s → %s", u.Old, u.File.Filename))
 			updated++
 		}
 		if a.mrGen.Get() != gen {
 			return
 		}
 		a.mrBusy.Set(false)
-		a.mrMsg.Set(fmt.Sprintf("Updates done: %d updated, %d already current, %d not on Modrinth · restart to apply",
-			updated, current, unknown))
+		a.mrMsg.Set(fmt.Sprintf("Updates done: %d of %d updated · restart the server to apply",
+			updated, len(pending)))
 	}()
 }
 
@@ -346,6 +390,9 @@ func (a *app) mrHasKinds() bool {
 }
 
 func (a *app) mrHints() []hint {
+	if a.mrUpd.Get() {
+		return []hint{{"y", "update all"}, {"n/Esc", "cancel"}}
+	}
 	var hints []hint
 	if a.mrTyping.Get() {
 		hints = []hint{{"Enter", "search"}}
@@ -362,6 +409,18 @@ func (a *app) mrHints() []hint {
 }
 
 func (a *app) mrKeyMap() tui.KeyMap {
+	if a.mrUpd.Get() {
+		cancel := func(ke tui.KeyEvent) {
+			a.mrPending = nil
+			a.mrUpd.Set(false)
+			a.mrMsg.Set("Update cancelled")
+		}
+		return tui.KeyMap{
+			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.mrApplyUpdates() }),
+			tui.OnStop(tui.Rune('n'), cancel),
+			tui.OnStop(tui.KeyEscape, cancel),
+		}
+	}
 	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
 	tab := tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.mrToggleKind() })
 	if a.mrTyping.Get() {

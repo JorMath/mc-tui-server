@@ -59,36 +59,42 @@ func HintsRow(hints []hint, green bool) *HintsRowView {
 
 	__tui_0 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+		tui.WithFlexWrap(tui.Wrap),
 		tui.WithGap(1),
 		tui.WithFlexShrink(0),
 	)
 	for i, h := range hints {
 		_ = i
+		__tui_1 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
 		if i > 0 {
-			__tui_1 := tui.New(
+			__tui_2 := tui.New(
 				tui.WithText("|"),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_0.AddChild(__tui_1)
+			__tui_1.AddChild(__tui_2)
 		}
 		if green {
-			__tui_2 := tui.New(
+			__tui_3 := tui.New(
 				tui.WithText(h.K),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green).Bold()),
 			)
-			__tui_0.AddChild(__tui_2)
+			__tui_1.AddChild(__tui_3)
 		} else {
-			__tui_3 := tui.New(
+			__tui_4 := tui.New(
 				tui.WithText(h.K),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 			)
-			__tui_0.AddChild(__tui_3)
+			__tui_1.AddChild(__tui_4)
 		}
-		__tui_4 := tui.New(
+		__tui_5 := tui.New(
 			tui.WithText(h.L),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_0.AddChild(__tui_4)
+		__tui_1.AddChild(__tui_5)
+		__tui_0.AddChild(__tui_1)
 	}
 
 	__bindApp := func(app *tui.App) {

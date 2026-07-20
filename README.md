@@ -31,8 +31,9 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   version and install it with one key. Each instance only offers what it
   supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
   and datapacks on every type (installed into the active world); `Tab`
-  switches the content type. Press `u` to update every installed mod or
-  plugin to its latest compatible version (matched by file hash).
+  switches the content type. Press `u` to check every installed mod or
+  plugin for newer compatible versions (matched by file hash) and update
+  them all after confirming.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
