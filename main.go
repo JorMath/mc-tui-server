@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 
 	tui "github.com/grindlemire/go-tui"
 
@@ -14,11 +15,26 @@ import (
 // version se inyecta en el build con -ldflags "-X main.version=v1.2.3".
 var version = "dev"
 
+// resolveVersion cae a la versión de módulo que embebe el toolchain: los
+// binarios de `go install ...@vX.Y.Z` no pasan por los scripts de build,
+// pero llevan la versión del tag en su build info.
+func resolveVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			return v
+		}
+	}
+	return version
+}
+
 func main() {
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
-		fmt.Println("mc-tui-server", version)
+		fmt.Println("mc-tui-server", resolveVersion())
 		return
 	}
 	if err := run(); err != nil {
