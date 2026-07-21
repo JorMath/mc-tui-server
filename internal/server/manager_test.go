@@ -88,15 +88,29 @@ func waitStatus(t *testing.T, m *Manager, want Status) {
 // waitForLog espera hasta encontrar una línea que contenga want.
 func waitForLog(t *testing.T, m *Manager, want string) {
 	t.Helper()
+	waitForLogs(t, m, want)
+}
+
+// waitForLogs espera hasta ver todas las líneas pedidas, en cualquier
+// orden: stdout y stderr llegan por goroutines distintas y su orden no
+// está garantizado.
+func waitForLogs(t *testing.T, m *Manager, wants ...string) {
+	t.Helper()
+	pending := make(map[string]bool, len(wants))
+	for _, w := range wants {
+		pending[w] = true
+	}
 	deadline := time.After(5 * time.Second)
-	for {
+	for len(pending) > 0 {
 		select {
 		case line := <-m.Logs():
-			if strings.Contains(line, want) {
-				return
+			for w := range pending {
+				if strings.Contains(line, w) {
+					delete(pending, w)
+				}
 			}
 		case <-deadline:
-			t.Fatalf("no llegó ninguna línea de log con %q", want)
+			t.Fatalf("no llegaron líneas de log con %v", pending)
 		}
 	}
 }
@@ -124,8 +138,7 @@ func TestStartEmitsLogsAndRuns(t *testing.T) {
 	if m.Status() != Running {
 		t.Fatalf("status = %q, quiero %q", m.Status(), Running)
 	}
-	waitForLog(t, m, "Hola desde el servidor falso")
-	waitForLog(t, m, "linea de stderr")
+	waitForLogs(t, m, "Hola desde el servidor falso", "linea de stderr")
 }
 
 func TestPID(t *testing.T) {
