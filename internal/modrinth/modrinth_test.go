@@ -395,3 +395,24 @@ func TestLatestByHashVanillaFails(t *testing.T) {
 		t.Fatal("vanilla no tiene loaders de mods; debe fallar")
 	}
 }
+
+func TestLatestFileWithDepsParsesDependencies(t *testing.T) {
+	srv := versionServer(t, `[
+		{"files":[{"url":"http://x/mod.jar","filename":"mod.jar","primary":true}],
+		 "dependencies":[
+			{"project_id":"P5FAIS","dependency_type":"required"},
+			{"project_id":"OPT1","dependency_type":"optional"}
+		 ]}
+	]`, nil)
+	c := &Client{BaseURL: srv.URL}
+	f, deps, err := c.LatestFileWithDeps(ctx(), "AAAA", config.Fabric, "1.21.4")
+	if err != nil {
+		t.Fatalf("LatestFileWithDeps: %v", err)
+	}
+	if f.Filename != "mod.jar" || len(deps) != 2 {
+		t.Fatalf("f=%+v deps=%v", f, deps)
+	}
+	if deps[0].ProjectID != "P5FAIS" || deps[0].Type != "required" {
+		t.Fatalf("deps[0] = %+v", deps[0])
+	}
+}

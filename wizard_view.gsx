@@ -78,6 +78,25 @@ templ WizardView(a *app) {
 				}
 			</div>
 		}
+		if a.wizStep.Get() == wizImpPath {
+			<div class="flex gap-1">
+				<span class="text-cyan font-bold">Folder:</span>
+				<span>{a.wizImpPath.Get()}</span>
+				<span class="text-cyan blink">_</span>
+			</div>
+			<span class="font-dim">Full path of an existing server folder — files are not moved</span>
+			if a.wizMsg.Get() != "" {
+				<span class="text-yellow">{a.wizMsg.Get()}</span>
+			}
+		}
+		if a.wizStep.Get() == wizImpVer {
+			<div class="flex gap-1">
+				<span class="text-cyan font-bold">Minecraft version (optional):</span>
+				<span>{a.wizImpVer.Get()}</span>
+				<span class="text-cyan blink">_</span>
+			</div>
+			<span class="font-dim">Used to filter Modrinth content; leave empty if unsure</span>
+		}
 		if a.wizStep.Get() == wizName {
 			<div class="flex gap-1">
 				<span class="text-cyan font-bold">Name:</span>

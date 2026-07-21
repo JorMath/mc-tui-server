@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
@@ -74,9 +73,13 @@ templ ConsoleView(a *app) {
 	<div
 		class="flex-col border-rounded p-1 flex-grow"
 		scrollable={tui.ScrollVertical}
-		scrollOffset={0, math.MaxInt}
+		scrollOffset={0, a.consoleScrollY()}
 	>
-		<span class="font-bold shrink-0">{fmt.Sprintf("Console — %s", a.currentName())}</span>
+		if a.logScroll.Get() > 0 {
+			<span class="font-bold text-yellow shrink-0">{fmt.Sprintf("Console — %s · scrolled (End follows live)", a.currentName())}</span>
+		} else {
+			<span class="font-bold shrink-0">{fmt.Sprintf("Console — %s", a.currentName())}</span>
+		}
 		for _, line := range a.currentLogs() {
 			<span>{line}</span>
 		}
@@ -190,6 +193,8 @@ templ (a *app) Render() {
 					@ModrinthView(a)
 				} else if a.plOpen.Get() {
 					@PlayersView(a)
+				} else if a.helpOpen.Get() {
+					@HelpView(a)
 				} else {
 					@ConsoleView(a)
 				}

@@ -24,21 +24,26 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   commands when the server runs, direct JSON edits (with the right UUID
   for online or offline mode) when it's stopped.
 - **Interactive console** — live server log with a command bar to send
-  commands straight to the server's stdin.
+  commands straight to the server's stdin. `PgUp`/`PgDn` scroll back
+  through the log (`End` resumes following), and the file manager's Logs
+  tab opens past logs, including gzipped ones.
 - **Metrics** — per-instance CPU and RAM usage refreshed every 500ms.
 - **Version selector** — create instances on Vanilla (Mojang), Paper,
   Purpur, Fabric, Forge, NeoForge or Quilt. Jar-based servers download
   straight from the official APIs; Forge/NeoForge/Quilt run their official
-  installer inside the instance automatically.
+  installer inside the instance automatically. You can also import an
+  existing server folder — launch mode and type are detected, files stay
+  where they are.
 - **File manager** — edit `server.properties` (comments preserved), list
   and delete worlds and plugins/mods safely.
 - **Modrinth** — search content filtered by your instance's loader and game
   version and install it with one key. Each instance only offers what it
   supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
   and datapacks on every type (installed into the active world); `Tab`
-  switches the content type. Press `u` to check every installed mod or
-  plugin for newer compatible versions (matched by file hash) and update
-  them all after confirming.
+  switches the content type. Installing a mod also pulls in its required
+  dependencies (Fabric API and friends) automatically. Press `u` to check
+  every installed mod or plugin for newer compatible versions (matched by
+  file hash) and update them all after confirming.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
@@ -135,6 +140,8 @@ mc-tui-server -version   # print the version and exit
 | `U` | update a modpack instance to the pack's latest version (backs up the world first) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
+| `PgUp/PgDn · End` | scroll the console / follow the live log |
+| `?` | help overlay with every shortcut |
 | `q` | quit (running servers are stopped gracefully) |
 
 Every screen shows its active keys in the footer, highlighted in cyan.

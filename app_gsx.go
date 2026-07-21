@@ -5,7 +5,6 @@ package main
 
 import (
 	"fmt"
-	"math"
 
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
@@ -314,20 +313,29 @@ func ConsoleView(a *app) *ConsoleViewView {
 		tui.WithPadding(1),
 		tui.WithFlexGrow(1),
 		tui.WithScrollable(tui.ScrollVertical),
-		tui.WithScrollOffset(0, math.MaxInt),
+		tui.WithScrollOffset(0, a.consoleScrollY()),
 	)
-	__tui_1 := tui.New(
-		tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
-		tui.WithFlexShrink(0),
-		tui.WithTextStyle(tui.NewStyle().Bold()),
-	)
-	__tui_0.AddChild(__tui_1)
-	for __idx_0, line := range a.currentLogs() {
-		_ = __idx_0
+	if a.logScroll.Get() > 0 {
+		__tui_1 := tui.New(
+			tui.WithText(fmt.Sprintf("Console — %s · scrolled (End follows live)", a.currentName())),
+			tui.WithFlexShrink(0),
+			tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Yellow)),
+		)
+		__tui_0.AddChild(__tui_1)
+	} else {
 		__tui_2 := tui.New(
-			tui.WithText(line),
+			tui.WithText(fmt.Sprintf("Console — %s", a.currentName())),
+			tui.WithFlexShrink(0),
+			tui.WithTextStyle(tui.NewStyle().Bold()),
 		)
 		__tui_0.AddChild(__tui_2)
+	}
+	for __idx_0, line := range a.currentLogs() {
+		_ = __idx_0
+		__tui_3 := tui.New(
+			tui.WithText(line),
+		)
+		__tui_0.AddChild(__tui_3)
 	}
 
 	__bindApp := func(app *tui.App) {
@@ -805,13 +813,18 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return PlayersView(a)
 			})
 			__tui_6.AddChild(__tui_11)
+		} else if a.helpOpen.Get() {
+			__tui_12 := app.Mount(a, 5, func() tui.Component {
+				return HelpView(a)
+			})
+			__tui_6.AddChild(__tui_12)
 		} else {
-			__tui_12 := ConsoleView(a)
-			__tui_6.AddChild(__tui_12.Root)
+			__tui_13 := ConsoleView(a)
+			__tui_6.AddChild(__tui_13.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_13 := FooterBar(a)
-		__tui_2.AddChild(__tui_13.Root)
+		__tui_14 := FooterBar(a)
+		__tui_2.AddChild(__tui_14.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}

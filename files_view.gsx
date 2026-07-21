@@ -35,6 +35,12 @@ templ FilesView(a *app) {
 			} else {
 				<span class="font-dim">Backups</span>
 			}
+			<span class="text-cyan font-bold">5</span>
+			if a.fmTab.Get() == 4 {
+				<span class="text-cyan">Logs</span>
+			} else {
+				<span class="font-dim">Logs</span>
+			}
 		</div>
 		if len(a.fmItems()) == 0 {
 			<span class="font-dim">(empty)</span>

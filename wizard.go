@@ -31,6 +31,8 @@ const (
 	wizPackSearch
 	wizPackList
 	wizPackVer
+	wizImpPath
+	wizImpVer
 	wizName
 	wizMem
 	wizEula
@@ -38,12 +40,13 @@ const (
 	wizError
 )
 
-// wizChoice es una opción del paso de tipo: una distribución de servidor o
-// el instalador de modpacks de Modrinth.
+// wizChoice es una opción del paso de tipo: una distribución de servidor,
+// el instalador de modpacks de Modrinth o importar una carpeta existente.
 type wizChoice struct {
 	Label   string
 	Type    config.ServerType
 	Modpack bool
+	Import  bool
 }
 
 var wizChoices = []wizChoice{
@@ -55,6 +58,7 @@ var wizChoices = []wizChoice{
 	{Label: "neoforge", Type: config.NeoForge},
 	{Label: "quilt", Type: config.Quilt},
 	{Label: "modpack (Modrinth)", Modpack: true},
+	{Label: "import existing server folder", Import: true},
 }
 
 // installerBased indica los tipos cuyo "jar" descargado es en realidad un
@@ -67,6 +71,11 @@ func installerBased(t config.ServerType) bool {
 // de modpacks.
 func (a *app) wizIsModpack() bool {
 	return wizChoices[a.wizTypeIdx.Get()].Modpack
+}
+
+// wizIsImport indica si la opción elegida es importar una carpeta.
+func (a *app) wizIsImport() bool {
+	return wizChoices[a.wizTypeIdx.Get()].Import
 }
 
 func validNameChar(r rune) bool {
@@ -90,6 +99,8 @@ func (a *app) wizOpen() {
 	a.wizPackIdx.Set(0)
 	a.wizPackVers.Set([]modrinth.PackVersion{})
 	a.wizPackVerIdx.Set(0)
+	a.wizImpPath.Set("")
+	a.wizImpVer.Set("")
 	a.wizStep.Set(wizType)
 }
 
@@ -111,6 +122,11 @@ func (a *app) wizFetchVersions() {
 	if a.wizIsModpack() {
 		a.wizMsg.Set("")
 		a.wizStep.Set(wizPackSearch)
+		return
+	}
+	if a.wizIsImport() {
+		a.wizMsg.Set("")
+		a.wizStep.Set(wizImpPath)
 		return
 	}
 	typ := wizChoices[a.wizTypeIdx.Get()].Type
@@ -702,6 +718,44 @@ func (a *app) wizKeyMap() tui.KeyMap {
 			}),
 			esc,
 		}
+	case wizImpPath:
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				if ke.Rune >= ' ' {
+					a.wizImpPath.Update(func(s string) string { return s + string(ke.Rune) })
+				}
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.wizImpPath.Update(func(s string) string {
+					r := []rune(s)
+					if len(r) == 0 {
+						return s
+					}
+					return string(r[:len(r)-1])
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizSubmitImportPath() }),
+			esc,
+		}
+	case wizImpVer:
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				r := ke.Rune
+				if (r >= '0' && r <= '9') || r == '.' || (r >= 'a' && r <= 'z') || r == '-' {
+					a.wizImpVer.Update(func(s string) string { return s + string(r) })
+				}
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.wizImpVer.Update(func(s string) string {
+					if len(s) == 0 {
+						return s
+					}
+					return s[:len(s)-1]
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizEula) }),
+			esc,
+		}
 	case wizName:
 		return tui.KeyMap{
 			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
@@ -735,15 +789,24 @@ func (a *app) wizKeyMap() tui.KeyMap {
 					return s[:len(s)-1]
 				})
 			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizEula) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
+				if a.wizIsImport() {
+					a.wizStep.Set(wizImpVer)
+					return
+				}
+				a.wizStep.Set(wizEula)
+			}),
 			esc,
 		}
 	case wizEula:
 		return tui.KeyMap{
 			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) {
-				if a.wizIsModpack() {
+				switch {
+				case a.wizIsImport():
+					a.wizFinishImport()
+				case a.wizIsModpack():
 					a.wizStartModpackInstall()
-				} else {
+				default:
 					a.wizStartDownload()
 				}
 			}),
@@ -766,6 +829,10 @@ func (a *app) wizHints() []hint {
 		return []hint{{"Esc", "cancel"}}
 	case wizVersion:
 		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizImpPath:
+		return []hint{{"type or paste", "folder path"}, {"Enter", "detect"}, {"Esc", "cancel"}}
+	case wizImpVer:
+		return []hint{{"e.g. 1.20.1", "optional, helps Modrinth filters"}, {"Enter", "continue"}, {"Esc", "cancel"}}
 	case wizPackSearch:
 		return []hint{{"Enter", "search"}, {"Esc", "cancel"}}
 	case wizPackList:
@@ -786,6 +853,24 @@ func (a *app) wizHints() []hint {
 }
 
 func (a *app) wizStepTitle() string {
+	if a.wizIsImport() {
+		switch a.wizStep.Get() {
+		case wizType:
+			return "1/6 · Server type"
+		case wizImpPath:
+			return "2/6 · Folder to import"
+		case wizName:
+			return "3/6 · Instance name"
+		case wizMem:
+			return "4/6 · Memory (MB)"
+		case wizImpVer:
+			return "5/6 · Minecraft version (optional)"
+		case wizEula:
+			return "6/6 · Minecraft EULA"
+		default:
+			return "Error"
+		}
+	}
 	// El flujo de modpack tiene dos pasos extra (búsqueda y pack).
 	if a.wizIsModpack() {
 		switch a.wizStep.Get() {

@@ -5,6 +5,7 @@
 package main
 
 import (
+	"math"
 	"path/filepath"
 	"time"
 
@@ -92,6 +93,9 @@ type app struct {
 	logs      *tui.State[map[string][]string]
 	cmdActive *tui.State[bool]
 	cmdText   *tui.State[string]
+	// logScroll desplaza la consola N líneas hacia arriba desde el final
+	// (0 = seguir el log en vivo).
+	logScroll *tui.State[int]
 
 	// Gestión de instancias (v0.1.1): renombrar y eliminar con confirmación.
 	// delTarget guarda el nombre pendiente de confirmar ("" = sin diálogo).
@@ -142,6 +146,15 @@ type app struct {
 	wizPackVers   *tui.State[[]modrinth.PackVersion]
 	wizPackVerIdx *tui.State[int]
 
+	// Import de carpeta existente (v0.3.1). Los imp* planos se setean al
+	// validar la ruta (main loop) y se leen al confirmar.
+	wizImpPath *tui.State[string]
+	wizImpVer  *tui.State[string]
+	impDir     string
+	impJar     string
+	impArgsDir string
+	impType    config.ServerType
+
 	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
 	// se incrementa tras cada mutación para forzar el re-render.
 	fmOpen      *tui.State[bool]
@@ -163,6 +176,12 @@ type app struct {
 	fmBackups   *tui.State[[]string]
 	fmBackupIdx *tui.State[int]
 	fmRestore   *tui.State[string]
+	// Visor de logs históricos (v0.3.1): lista de logs/ y contenido abierto.
+	fmLogs      *tui.State[[]string]
+	fmLogIdx    *tui.State[int]
+	fmLogView   *tui.State[bool]
+	fmLogLines  *tui.State[[]string]
+	fmLogScroll *tui.State[int]
 
 	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
 	// cerrado, igual que wizGen. mrKind es el tipo de contenido activo
@@ -187,6 +206,9 @@ type app struct {
 	// publicación que mrPending.
 	pkConfirm *tui.State[string]
 	pkPending modrinth.PackVersion
+
+	// Overlay de ayuda (v0.3.1).
+	helpOpen *tui.State[bool]
 
 	// Panel de jugadores (v0.3.0): whitelist, ops y bans.
 	plOpen   *tui.State[bool]
@@ -217,6 +239,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		logs:           newState(&reg, logs),
 		cmdActive:      newState(&reg, false),
 		cmdText:        newState(&reg, ""),
+		logScroll:      newState(&reg, 0),
 		renActive:      newState(&reg, false),
 		renText:        newState(&reg, ""),
 		renMsg:         newState(&reg, ""),
@@ -251,6 +274,8 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		wizPackIdx:    newState(&reg, 0),
 		wizPackVers:   newState(&reg, []modrinth.PackVersion{}),
 		wizPackVerIdx: newState(&reg, 0),
+		wizImpPath:    newState(&reg, ""),
+		wizImpVer:     newState(&reg, ""),
 
 		fmOpen:      newState(&reg, false),
 		fmTab:       newState(&reg, 0),
@@ -269,6 +294,11 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmBackups:   newState(&reg, []string{}),
 		fmBackupIdx: newState(&reg, 0),
 		fmRestore:   newState(&reg, ""),
+		fmLogs:      newState(&reg, []string{}),
+		fmLogIdx:    newState(&reg, 0),
+		fmLogView:   newState(&reg, false),
+		fmLogLines:  newState(&reg, []string{}),
+		fmLogScroll: newState(&reg, 0),
 
 		mr:        &modrinth.Client{},
 		mrKind:    newState(&reg, ""),
@@ -283,6 +313,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		mrUpd:     newState(&reg, false),
 		pkConfirm: newState(&reg, ""),
 
+		helpOpen: newState(&reg, false),
 		plOpen:   newState(&reg, false),
 		plTab:    newState(&reg, 0),
 		plList:   newState(&reg, []string{}),
@@ -395,6 +426,7 @@ func (a *app) moveSelection(delta int) {
 	if n == 0 {
 		return
 	}
+	a.logScroll.Set(0)
 	a.selected.Update(func(i int) int {
 		i += delta
 		if i < 0 {
@@ -425,7 +457,8 @@ func (a *app) mainHints() []hint {
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
 		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
-		{"U", "update pack"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
+		{"U", "update pack"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"},
+		{"?", "help"}, {"q", "quit"},
 	}
 }
 
@@ -439,6 +472,9 @@ func (a *app) KeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyEnter, dismiss),
 			tui.OnStop(tui.KeyEscape, dismiss),
 		}
+	}
+	if a.helpOpen.Get() {
+		return a.helpKeyMap()
 	}
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
@@ -483,6 +519,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
 		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
 		tui.On(tui.Rune('p'), func(ke tui.KeyEvent) { a.plOpenPanel() }),
+		tui.On(tui.Rune('?'), func(ke tui.KeyEvent) { a.helpOpen.Set(true) }),
 		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
 		tui.On(tui.Rune('M'), func(ke tui.KeyEvent) { a.memOpen() }),
 		tui.On(tui.Rune('a'), func(ke tui.KeyEvent) { a.toggleAutoRestart() }),
@@ -497,7 +534,46 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('s'), func(ke tui.KeyEvent) { a.startSelected() }),
 		tui.On(tui.Rune('x'), func(ke tui.KeyEvent) { a.stopSelected() }),
 		tui.On(tui.Rune('r'), func(ke tui.KeyEvent) { a.restartSelected() }),
+		tui.On(tui.KeyPageUp, func(ke tui.KeyEvent) { a.scrollConsole(10) }),
+		tui.On(tui.KeyPageDown, func(ke tui.KeyEvent) { a.scrollConsole(-10) }),
+		tui.On(tui.KeyEnd, func(ke tui.KeyEvent) { a.logScroll.Set(0) }),
 	}
+}
+
+// scrollConsole desplaza la consola delta líneas hacia arriba (positivo)
+// o hacia abajo; en 0 vuelve a seguir el log en vivo.
+func (a *app) scrollConsole(delta int) {
+	max := len(a.currentLogs())
+	a.logScroll.Update(func(s int) int {
+		s += delta
+		if s < 0 {
+			s = 0
+		}
+		if s > max {
+			s = max
+		}
+		return s
+	})
+}
+
+// consoleScrollY ancla la consola abajo (seguir en vivo) o la desplaza
+// logScroll líneas hacia arriba desde el final; la altura visible se
+// estima desde la terminal y el contenedor recorta el exceso.
+func (a *app) consoleScrollY() int {
+	s := a.logScroll.Get()
+	if s == 0 {
+		return math.MaxInt
+	}
+	_, h := a.termSize()
+	view := h - 8
+	if view < 3 {
+		view = 3
+	}
+	y := len(a.currentLogs()) - view - s
+	if y < 0 {
+		return 0
+	}
+	return y
 }
 
 func (a *app) Watchers() []tui.Watcher {

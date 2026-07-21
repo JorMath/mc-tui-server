@@ -194,10 +194,16 @@ func (c *Client) ModpackVersions(ctx context.Context, projectID string) ([]PackV
 	return out, nil
 }
 
-// latestFile devuelve el archivo primario de la versión más reciente del
-// proyecto que sea compatible con los loaders y la versión del juego.
-// compat describe la combinación para los mensajes de error.
-func (c *Client) latestFile(ctx context.Context, projectID string, loaders []string, gameVersion, compat string) (File, error) {
+// Dependency es una dependencia declarada por la versión de un proyecto.
+type Dependency struct {
+	ProjectID string `json:"project_id"`
+	Type      string `json:"dependency_type"` // required, optional, incompatible, embedded
+}
+
+// latestFile devuelve el archivo primario y las dependencias de la
+// versión más reciente del proyecto que sea compatible con los loaders y
+// la versión del juego. compat describe la combinación para los errores.
+func (c *Client) latestFile(ctx context.Context, projectID string, loaders []string, gameVersion, compat string) (File, []Dependency, error) {
 	params := url.Values{}
 	params.Set("loaders", jsonList(loaders))
 	params.Set("game_versions", jsonList([]string{gameVersion}))
@@ -208,17 +214,18 @@ func (c *Client) latestFile(ctx context.Context, projectID string, loaders []str
 			Filename string `json:"filename"`
 			Primary  bool   `json:"primary"`
 		} `json:"files"`
+		Dependencies []Dependency `json:"dependencies"`
 	}
 	endpoint := fmt.Sprintf("%s/v2/project/%s/version?%s", c.base(), projectID, params.Encode())
 	if err := download.GetJSON(ctx, c.HTTP, endpoint, &versions); err != nil {
-		return File{}, err
+		return File{}, nil, err
 	}
 	if len(versions) == 0 {
-		return File{}, fmt.Errorf("no version of %s is compatible with %s", projectID, compat)
+		return File{}, nil, fmt.Errorf("no version of %s is compatible with %s", projectID, compat)
 	}
 	files := versions[0].Files
 	if len(files) == 0 {
-		return File{}, fmt.Errorf("the latest version of %s has no files", projectID)
+		return File{}, nil, fmt.Errorf("the latest version of %s has no files", projectID)
 	}
 	chosen := files[0]
 	for _, f := range files {
@@ -227,7 +234,7 @@ func (c *Client) latestFile(ctx context.Context, projectID string, loaders []str
 			break
 		}
 	}
-	return File{URL: chosen.URL, Filename: chosen.Filename}, nil
+	return File{URL: chosen.URL, Filename: chosen.Filename}, versions[0].Dependencies, nil
 }
 
 // LatestByHash consulta, para cada sha1 de un archivo local, la última
@@ -309,9 +316,16 @@ func (c *Client) ServerUnsupported(ctx context.Context, ids []string) (map[strin
 // LatestFile devuelve el archivo de la versión más reciente del proyecto
 // compatible con el loader y la versión del juego.
 func (c *Client) LatestFile(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, error) {
+	f, _, err := c.LatestFileWithDeps(ctx, projectID, t, gameVersion)
+	return f, err
+}
+
+// LatestFileWithDeps es LatestFile más las dependencias que declara esa
+// versión, para poder instalarlas junto al proyecto.
+func (c *Client) LatestFileWithDeps(ctx context.Context, projectID string, t config.ServerType, gameVersion string) (File, []Dependency, error) {
 	loaders, _, err := loadersFor(t)
 	if err != nil {
-		return File{}, err
+		return File{}, nil, err
 	}
 	return c.latestFile(ctx, projectID, loaders, gameVersion, fmt.Sprintf("%s %s", t, gameVersion))
 }
@@ -319,5 +333,6 @@ func (c *Client) LatestFile(ctx context.Context, projectID string, t config.Serv
 // LatestDatapackFile devuelve el zip de datapack más reciente del proyecto
 // compatible con la versión del juego.
 func (c *Client) LatestDatapackFile(ctx context.Context, projectID, gameVersion string) (File, error) {
-	return c.latestFile(ctx, projectID, []string{"datapack"}, gameVersion, "datapacks for "+gameVersion)
+	f, _, err := c.latestFile(ctx, projectID, []string{"datapack"}, gameVersion, "datapacks for "+gameVersion)
+	return f, err
 }

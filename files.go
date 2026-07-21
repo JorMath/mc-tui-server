@@ -3,9 +3,14 @@
 package main
 
 import (
+	"bufio"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/assets"
@@ -16,7 +21,65 @@ import (
 	tui "github.com/grindlemire/go-tui"
 )
 
-const fmTabs = 4
+const fmTabs = 5
+
+// fmLogsList lee los archivos de logs/ de la instancia: latest.log primero
+// y el resto de más nuevo a más viejo.
+func fmLogsList(instDir string) []string {
+	entries, err := os.ReadDir(filepath.Join(instDir, "logs"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || (!strings.HasSuffix(name, ".log") && !strings.HasSuffix(name, ".log.gz")) {
+			continue
+		}
+		out = append(out, name)
+	}
+	sort.Sort(sort.Reverse(sort.StringSlice(out)))
+	for i, n := range out {
+		if n == "latest.log" {
+			out = append(out[:i], out[i+1:]...)
+			out = append([]string{"latest.log"}, out...)
+			break
+		}
+	}
+	return out
+}
+
+// readLogFile lee un log (descomprimiendo .gz) y devuelve sus últimas
+// maxLogLines líneas.
+func readLogFile(path string) ([]string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, fmt.Errorf("decompressing %s: %w", path, err)
+		}
+		defer gz.Close()
+		r = gz
+	}
+	sc := bufio.NewScanner(r)
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	var lines []string
+	for sc.Scan() {
+		lines = append(lines, sc.Text())
+		if len(lines) > maxLogLines {
+			lines = lines[1:]
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
+}
 
 func (a *app) fmOpenPanel() {
 	mgr := a.current()
@@ -29,6 +92,8 @@ func (a *app) fmOpenPanel() {
 	a.fmWorldIdx.Set(0)
 	a.fmPluginIdx.Set(0)
 	a.fmBackupIdx.Set(0)
+	a.fmLogIdx.Set(0)
+	a.fmLogView.Set(false)
 	a.fmEditing.Set(false)
 	a.fmDirty.Set(false)
 	a.fmConfirm.Set("")
@@ -62,6 +127,7 @@ func (a *app) fmReloadLists(inst config.Instance) {
 		a.fmMsg.Set("Error: " + err.Error())
 	}
 	a.fmBackups.Set(backups)
+	a.fmLogs.Set(fmLogsList(inst.Dir))
 }
 
 func (a *app) fmClose() {
@@ -86,8 +152,14 @@ func (a *app) fmItems() []listItem {
 		return fullItems(a.fmWorlds.Get(), a.fmWorldIdx.Get())
 	case 2:
 		return fullItems(a.fmPlugins.Get(), a.fmPluginIdx.Get())
-	default:
+	case 3:
 		return fullItems(a.fmBackups.Get(), a.fmBackupIdx.Get())
+	default:
+		if a.fmLogView.Get() {
+			// Contenido del log abierto, sin selección.
+			return fullItems(a.fmLogLines.Get(), -1)
+		}
+		return fullItems(a.fmLogs.Get(), a.fmLogIdx.Get())
 	}
 }
 
@@ -100,8 +172,13 @@ func (a *app) fmScrollY() int {
 		return scrollTo(a.fmWorldIdx.Get())
 	case 2:
 		return scrollTo(a.fmPluginIdx.Get())
-	default:
+	case 3:
 		return scrollTo(a.fmBackupIdx.Get())
+	default:
+		if a.fmLogView.Get() {
+			return a.fmLogScroll.Get()
+		}
+		return scrollTo(a.fmLogIdx.Get())
 	}
 }
 
@@ -128,8 +205,14 @@ func (a *app) fmMove(delta int) {
 		move(a.fmWorldIdx, len(a.fmWorlds.Get()))
 	case 2:
 		move(a.fmPluginIdx, len(a.fmPlugins.Get()))
-	default:
+	case 3:
 		move(a.fmBackupIdx, len(a.fmBackups.Get()))
+	default:
+		if a.fmLogView.Get() {
+			move(a.fmLogScroll, len(a.fmLogLines.Get()))
+			return
+		}
+		move(a.fmLogIdx, len(a.fmLogs.Get()))
 	}
 }
 
@@ -334,9 +417,39 @@ func (a *app) fmTabName() string {
 		return "Worlds"
 	case 2:
 		return "Plugins/Mods"
-	default:
+	case 3:
 		return "Backups"
+	default:
+		if a.fmLogView.Get() {
+			logs := a.fmLogs.Get()
+			if i := a.fmLogIdx.Get(); i >= 0 && i < len(logs) {
+				return "Logs · " + logs[i]
+			}
+		}
+		return "Logs"
 	}
+}
+
+// fmOpenLog carga el log seleccionado en el visor.
+func (a *app) fmOpenLog() {
+	mgr := a.current()
+	logs := a.fmLogs.Get()
+	idx := a.fmLogIdx.Get()
+	if mgr == nil || idx < 0 || idx >= len(logs) {
+		return
+	}
+	lines, err := readLogFile(filepath.Join(mgr.Instance().Dir, "logs", logs[idx]))
+	if err != nil {
+		a.fmMsg.Set("Error: " + err.Error())
+		return
+	}
+	if len(lines) == 0 {
+		lines = []string{"(empty)"}
+	}
+	a.fmLogLines.Set(lines)
+	a.fmLogScroll.Set(0)
+	a.fmLogView.Set(true)
+	a.fmMsg.Set("")
 }
 
 func (a *app) fmHints() []hint {
@@ -351,11 +464,16 @@ func (a *app) fmHints() []hint {
 	}
 	switch a.fmTab.Get() {
 	case 0:
-		return []hint{{"↑/↓", "select"}, {"Enter", "edit"}, {"w", "save"}, {"1-4 Tab", "switch tab"}, {"Esc", "close"}}
+		return []hint{{"↑/↓", "select"}, {"Enter", "edit"}, {"w", "save"}, {"1-5 Tab", "switch tab"}, {"Esc", "close"}}
 	case 3:
-		return []hint{{"↑/↓", "select"}, {"Enter", "restore"}, {"d", "delete"}, {"1-4 Tab", "switch tab"}, {"Esc", "close"}}
+		return []hint{{"↑/↓", "select"}, {"Enter", "restore"}, {"d", "delete"}, {"1-5 Tab", "switch tab"}, {"Esc", "close"}}
+	case 4:
+		if a.fmLogView.Get() {
+			return []hint{{"↑/↓ PgUp/PgDn", "scroll"}, {"Esc", "back to list"}}
+		}
+		return []hint{{"↑/↓", "select"}, {"Enter", "view"}, {"1-5 Tab", "switch tab"}, {"Esc", "close"}}
 	default:
-		return []hint{{"↑/↓", "select"}, {"d", "delete"}, {"1-4 Tab", "switch tab"}, {"Esc", "close"}}
+		return []hint{{"↑/↓", "select"}, {"d", "delete"}, {"1-5 Tab", "switch tab"}, {"Esc", "close"}}
 	}
 }
 
@@ -392,12 +510,17 @@ func (a *app) fmKeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmRestore.Set("") }),
 		}
 	}
+	setTab := func(t int) {
+		a.fmLogView.Set(false)
+		a.fmTab.Set(t)
+	}
 	return tui.KeyMap{
-		tui.OnStop(tui.Rune('1'), func(ke tui.KeyEvent) { a.fmTab.Set(0) }),
-		tui.OnStop(tui.Rune('2'), func(ke tui.KeyEvent) { a.fmTab.Set(1) }),
-		tui.OnStop(tui.Rune('3'), func(ke tui.KeyEvent) { a.fmTab.Set(2) }),
-		tui.OnStop(tui.Rune('4'), func(ke tui.KeyEvent) { a.fmTab.Set(3) }),
-		tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.fmTab.Update(func(t int) int { return (t + 1) % fmTabs }) }),
+		tui.OnStop(tui.Rune('1'), func(ke tui.KeyEvent) { setTab(0) }),
+		tui.OnStop(tui.Rune('2'), func(ke tui.KeyEvent) { setTab(1) }),
+		tui.OnStop(tui.Rune('3'), func(ke tui.KeyEvent) { setTab(2) }),
+		tui.OnStop(tui.Rune('4'), func(ke tui.KeyEvent) { setTab(3) }),
+		tui.OnStop(tui.Rune('5'), func(ke tui.KeyEvent) { setTab(4) }),
+		tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { setTab((a.fmTab.Get() + 1) % fmTabs) }),
 		tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.fmMove(-1) }),
 		tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.fmMove(1) }),
 		tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.fmMove(-10) }),
@@ -408,6 +531,10 @@ func (a *app) fmKeyMap() tui.KeyMap {
 				a.fmBeginEdit()
 			case 3:
 				a.fmAskRestore()
+			case 4:
+				if !a.fmLogView.Get() {
+					a.fmOpenLog()
+				}
 			}
 		}),
 		tui.OnStop(tui.Rune('w'), func(ke tui.KeyEvent) {
@@ -416,10 +543,16 @@ func (a *app) fmKeyMap() tui.KeyMap {
 			}
 		}),
 		tui.OnStop(tui.Rune('d'), func(ke tui.KeyEvent) {
-			if a.fmTab.Get() != 0 {
+			if t := a.fmTab.Get(); t != 0 && t != 4 {
 				a.fmAskDelete()
 			}
 		}),
-		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.fmClose() }),
+		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) {
+			if a.fmLogView.Get() {
+				a.fmLogView.Set(false)
+				return
+			}
+			a.fmClose()
+		}),
 	}
 }

@@ -169,11 +169,12 @@ func (a *app) mrInstall() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		var file modrinth.File
+		var deps []modrinth.Dependency
 		var err error
 		if kind == "datapacks" {
 			file, err = a.mr.LatestDatapackFile(ctx, project.ID, inst.Version)
 		} else {
-			file, err = a.mr.LatestFile(ctx, project.ID, inst.Type, inst.Version)
+			file, deps, err = a.mr.LatestFileWithDeps(ctx, project.ID, inst.Type, inst.Version)
 		}
 		if err == nil {
 			dest := filepath.Join(inst.Dir, sub, file.Filename)
@@ -189,18 +190,78 @@ func (a *app) mrInstall() {
 		if a.mrGen.Get() != gen {
 			return
 		}
-		a.mrBusy.Set(false)
 		if err != nil {
+			a.mrBusy.Set(false)
 			a.mrMsg.Set("Error: " + err.Error())
 			return
+		}
+		installedDeps := 0
+		if kind != "datapacks" {
+			installedDeps = a.mrInstallDeps(ctx, gen, inst, sub, project.ID, deps)
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		suffix := ""
+		if installedDeps > 0 {
+			suffix = fmt.Sprintf(" (+%d dependencies)", installedDeps)
 		}
 		if kind == "datapacks" {
 			a.mrMsg.Set(fmt.Sprintf("Installed %s into %s · run /reload or restart to load it", file.Filename, filepath.ToSlash(sub)+"/"))
 		} else {
-			a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", file.Filename, sub))
+			a.mrMsg.Set(fmt.Sprintf("Installed %s%s into %s/ · restart the server to load it", file.Filename, suffix, sub))
 		}
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, file.Filename))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)%s", project.Title, file.Filename, suffix))
 	}()
+}
+
+// mrInstallDeps resuelve e instala recursivamente las dependencias
+// required de un mod recién instalado (Fabric API, librerías...), saltando
+// los proyectos solo-cliente y los archivos que ya están en la carpeta.
+// Devuelve cuántas instaló. Corre dentro de la goroutine de mrInstall.
+func (a *app) mrInstallDeps(ctx context.Context, gen int, inst config.Instance, sub, rootID string, deps []modrinth.Dependency) int {
+	queue := []string{}
+	visited := map[string]bool{rootID: true}
+	enqueue := func(list []modrinth.Dependency) {
+		for _, d := range list {
+			if d.Type == "required" && d.ProjectID != "" && !visited[d.ProjectID] {
+				visited[d.ProjectID] = true
+				queue = append(queue, d.ProjectID)
+			}
+		}
+	}
+	enqueue(deps)
+	installed := 0
+	// Tope defensivo: ningún árbol de dependencias razonable pasa de 25.
+	for len(queue) > 0 && len(visited) <= 25 {
+		id := queue[0]
+		queue = queue[1:]
+		if a.mrGen.Get() != gen {
+			return installed
+		}
+		if unsupported, err := a.mr.ServerUnsupported(ctx, []string{id}); err == nil && unsupported[id] {
+			continue
+		}
+		file, subDeps, err := a.mr.LatestFileWithDeps(ctx, id, inst.Type, inst.Version)
+		if err != nil {
+			a.appendLog(inst.Name, "[mc-tui] Skipped a dependency: "+err.Error())
+			continue
+		}
+		enqueue(subDeps)
+		dest := filepath.Join(inst.Dir, sub, file.Filename)
+		if _, err := os.Stat(dest); err == nil {
+			continue // ya instalada
+		}
+		a.mrMsg.Set(fmt.Sprintf("Installing dependency %s...", file.Filename))
+		if err := download.DownloadFile(ctx, nil, file.URL, dest, nil); err != nil {
+			a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Dependency %s failed: %s", file.Filename, err))
+			continue
+		}
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed dependency %s", file.Filename))
+		installed++
+	}
+	return installed
 }
 
 // sha1Of calcula el sha1 en hex de un archivo.
