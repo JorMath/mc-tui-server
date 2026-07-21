@@ -182,3 +182,44 @@ func TestModrinthProject(t *testing.T) {
 		t.Fatalf("ModrinthProject con host ajeno = %q, quiero vacío", got)
 	}
 }
+
+func TestWriteAndLoadIndexRoundTrip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), IndexCopyName)
+	ix := Index{
+		Name:         "Pack",
+		VersionID:    "1.0.0",
+		Files:        []IndexFile{{Path: "mods/a.jar", Hashes: Hashes{SHA1: "abc"}, Downloads: []string{"https://x/a.jar"}}},
+		Dependencies: map[string]string{"minecraft": "1.20.1", "forge": "47.4.18"},
+	}
+	if err := WriteIndex(ix, path); err != nil {
+		t.Fatalf("WriteIndex: %v", err)
+	}
+	got, err := LoadIndex(path)
+	if err != nil {
+		t.Fatalf("LoadIndex: %v", err)
+	}
+	if got.Name != "Pack" || len(got.Files) != 1 || got.Files[0].Hashes.SHA1 != "abc" ||
+		got.Dependencies["forge"] != "47.4.18" {
+		t.Fatalf("roundtrip = %+v", got)
+	}
+	if _, err := LoadIndex(filepath.Join(t.TempDir(), "no-existe.json")); err == nil {
+		t.Fatal("índice inexistente debe fallar")
+	}
+}
+
+func TestParseReadsHashes(t *testing.T) {
+	const withHash = `{
+		"formatVersion": 1, "game": "minecraft", "versionId": "1", "name": "P",
+		"files": [{"path": "mods/a.jar", "hashes": {"sha1": "ff00"},
+		 "downloads": ["https://cdn.example/a.jar"]}],
+		"dependencies": {"minecraft": "1.20.1", "forge": "47.0.0"}
+	}`
+	path := writePack(t, map[string]string{indexName: withHash})
+	ix, err := Parse(path)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if ix.Files[0].Hashes.SHA1 != "ff00" {
+		t.Fatalf("sha1 = %q", ix.Files[0].Hashes.SHA1)
+	}
+}

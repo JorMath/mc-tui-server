@@ -391,7 +391,7 @@ func FooterBar(a *app) *FooterBarView {
 	var view FooterBarView
 	var watchers []tui.Watcher
 
-	var __tui_37 *HintsRowView
+	var __tui_57 *HintsRowView
 	var __tui_0 *tui.Element
 	if a.cmdActive.Get() {
 		__tui_1 := tui.New(
@@ -554,68 +554,184 @@ func FooterBar(a *app) *FooterBarView {
 		if __tui_0 == nil {
 			__tui_0 = __tui_20
 		}
-	} else if a.delTarget.Get() != "" {
+	} else if a.schActive.Get() {
 		__tui_30 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 			tui.WithFlexShrink(0),
 			tui.WithPaddingTRBL(0, 1, 0, 1),
 		)
-		__tui_31 := tui.New(
-			tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		if a.schStep.Get() == 0 {
+			__tui_31 := tui.New(
+				tui.WithText(fmt.Sprintf("Backup every N hours for %s (empty = off):", a.currentName())),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_30.AddChild(__tui_31)
+			__tui_32 := tui.New(
+				tui.WithText(a.schBackup.Get()),
+			)
+			__tui_30.AddChild(__tui_32)
+		} else {
+			__tui_33 := tui.New(
+				tui.WithText("Daily restart at HH:MM (empty = off):"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_30.AddChild(__tui_33)
+			__tui_34 := tui.New(
+				tui.WithText(a.schRestart.Get()),
+			)
+			__tui_30.AddChild(__tui_34)
+		}
+		__tui_35 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_30.AddChild(__tui_31)
-		__tui_32 := tui.New(
-			tui.WithText("y"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		__tui_30.AddChild(__tui_35)
+		if a.schMsg.Get() != "" {
+			__tui_36 := tui.New(
+				tui.WithText(a.schMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+			)
+			__tui_30.AddChild(__tui_36)
+		}
+		__tui_37 := tui.New(
+			tui.WithText("Enter"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_30.AddChild(__tui_32)
-		__tui_33 := tui.New(
-			tui.WithText("delete"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_30.AddChild(__tui_33)
-		__tui_34 := tui.New(
+		__tui_30.AddChild(__tui_37)
+		if a.schStep.Get() == 0 {
+			__tui_38 := tui.New(
+				tui.WithText("next"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_30.AddChild(__tui_38)
+		} else {
+			__tui_39 := tui.New(
+				tui.WithText("saves"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_30.AddChild(__tui_39)
+		}
+		__tui_40 := tui.New(
 			tui.WithText("|"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_30.AddChild(__tui_34)
-		__tui_35 := tui.New(
-			tui.WithText("n/Esc"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		__tui_30.AddChild(__tui_40)
+		__tui_41 := tui.New(
+			tui.WithText("Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_30.AddChild(__tui_35)
-		__tui_36 := tui.New(
-			tui.WithText("keep"),
+		__tui_30.AddChild(__tui_41)
+		__tui_42 := tui.New(
+			tui.WithText("cancels"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_30.AddChild(__tui_36)
+		__tui_30.AddChild(__tui_42)
 		if __tui_0 == nil {
 			__tui_0 = __tui_30
 		}
-	} else {
-		__tui_37 = HintsRow(a.mainHints(), false)
+	} else if a.pkConfirm.Get() != "" {
+		__tui_43 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_44 := tui.New(
+			tui.WithText(a.pkConfirm.Get()),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow).Bold()),
+		)
+		__tui_43.AddChild(__tui_44)
+		__tui_45 := tui.New(
+			tui.WithText("y"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow).Bold()),
+		)
+		__tui_43.AddChild(__tui_45)
+		__tui_46 := tui.New(
+			tui.WithText("update"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_43.AddChild(__tui_46)
+		__tui_47 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_43.AddChild(__tui_47)
+		__tui_48 := tui.New(
+			tui.WithText("n/Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow).Bold()),
+		)
+		__tui_43.AddChild(__tui_48)
+		__tui_49 := tui.New(
+			tui.WithText("cancel"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_43.AddChild(__tui_49)
 		if __tui_0 == nil {
-			__tui_0 = __tui_37.Root
+			__tui_0 = __tui_43
+		}
+	} else if a.delTarget.Get() != "" {
+		__tui_50 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+			tui.WithFlexShrink(0),
+			tui.WithPaddingTRBL(0, 1, 0, 1),
+		)
+		__tui_51 := tui.New(
+			tui.WithText(fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_50.AddChild(__tui_51)
+		__tui_52 := tui.New(
+			tui.WithText("y"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_50.AddChild(__tui_52)
+		__tui_53 := tui.New(
+			tui.WithText("delete"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_50.AddChild(__tui_53)
+		__tui_54 := tui.New(
+			tui.WithText("|"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_50.AddChild(__tui_54)
+		__tui_55 := tui.New(
+			tui.WithText("n/Esc"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+		)
+		__tui_50.AddChild(__tui_55)
+		__tui_56 := tui.New(
+			tui.WithText("keep"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_50.AddChild(__tui_56)
+		if __tui_0 == nil {
+			__tui_0 = __tui_50
+		}
+	} else {
+		__tui_57 = HintsRow(a.mainHints(), false)
+		if __tui_0 == nil {
+			__tui_0 = __tui_57.Root
 		}
 	}
 
-	if __tui_37 != nil {
-		watchers = append(watchers, __tui_37.GetWatchers()...)
+	if __tui_57 != nil {
+		watchers = append(watchers, __tui_57.GetWatchers()...)
 	}
 
 	__bindApp := func(app *tui.App) {
-		if __tui_37 != nil {
-			if binder, ok := any(__tui_37).(tui.AppBinder); ok {
+		if __tui_57 != nil {
+			if binder, ok := any(__tui_57).(tui.AppBinder); ok {
 				binder.BindApp(app)
 			}
 		}
 	}
 
 	__unbindApp := func() {
-		if __tui_37 != nil {
-			if unbinder, ok := any(__tui_37).(tui.AppUnbinder); ok {
+		if __tui_57 != nil {
+			if unbinder, ok := any(__tui_57).(tui.AppUnbinder); ok {
 				unbinder.UnbindApp()
 			}
 		}
@@ -684,13 +800,18 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return ModrinthView(a)
 			})
 			__tui_6.AddChild(__tui_10)
+		} else if a.plOpen.Get() {
+			__tui_11 := app.Mount(a, 4, func() tui.Component {
+				return PlayersView(a)
+			})
+			__tui_6.AddChild(__tui_11)
 		} else {
-			__tui_11 := ConsoleView(a)
-			__tui_6.AddChild(__tui_11.Root)
+			__tui_12 := ConsoleView(a)
+			__tui_6.AddChild(__tui_12.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_12 := FooterBar(a)
-		__tui_2.AddChild(__tui_12.Root)
+		__tui_13 := FooterBar(a)
+		__tui_2.AddChild(__tui_13.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}

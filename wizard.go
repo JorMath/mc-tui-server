@@ -600,14 +600,21 @@ func (a *app) wizStartModpackInstall() {
 			a.wizFail(gen, err)
 			return
 		}
+		// La copia del índice y los IDs del pack permiten actualizar la
+		// instancia cuando el modpack publique una versión nueva.
+		if err := mrpack.WriteIndex(ix, filepath.Join(dir, mrpack.IndexCopyName)); err != nil {
+			a.appendLog(name, "[mc-tui] Warning: could not save the pack index: "+err.Error())
+		}
 		inst := config.Instance{
-			Name:     name,
-			Dir:      dir,
-			JarPath:  jarPath,
-			ArgsDir:  argsDir,
-			MemoryMB: memMB,
-			Type:     loaderTypes[ld.Name],
-			Version:  ld.MC,
+			Name:      name,
+			Dir:       dir,
+			JarPath:   jarPath,
+			ArgsDir:   argsDir,
+			MemoryMB:  memMB,
+			Type:      loaderTypes[ld.Name],
+			Version:   ld.MC,
+			PackID:    pack.ID,
+			PackVerID: pv.ID,
 		}
 		if err := a.store.Add(inst); err != nil {
 			a.wizFail(gen, err)

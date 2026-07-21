@@ -5,9 +5,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/JorMath/mc-tui-server/internal/backup"
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/javacheck"
 	"github.com/JorMath/mc-tui-server/internal/mcping"
@@ -102,6 +104,77 @@ func (a *app) refreshStatuses() {
 	})
 	a.refreshSamples()
 	a.refreshPings()
+	a.refreshSchedules()
+}
+
+// refreshSchedules ejecuta los backups periódicos y el restart diario de
+// las instancias corriendo. La config se lee del store, que es la fuente
+// de verdad tras editar el schedule.
+func (a *app) refreshSchedules() {
+	now := time.Now()
+	for _, mgr := range a.managers.Get() {
+		if mgr.Status() != server.Running {
+			continue
+		}
+		inst, ok := a.store.Get(mgr.Instance().Name)
+		if !ok {
+			continue
+		}
+		name := inst.Name
+		if inst.BackupHours > 0 {
+			last, started := a.lastBackup[name]
+			switch {
+			case !started:
+				// El primer backup ocurre N horas después de arrancar.
+				a.lastBackup[name] = now
+			case now.Sub(last) >= time.Duration(inst.BackupHours)*time.Hour:
+				a.lastBackup[name] = now
+				a.liveBackup(mgr, inst)
+			}
+		}
+		if inst.RestartTime != "" && now.Format("15:04") == inst.RestartTime {
+			day := now.Format("2006-01-02")
+			if a.lastRestartDay[name] != day {
+				a.lastRestartDay[name] = day
+				a.appendLog(name, "[mc-tui] Scheduled daily restart...")
+				go func(m *server.Manager) {
+					if err := m.Restart(stopTimeout); err != nil {
+						a.appendLog(name, "[mc-tui] Scheduled restart failed: "+err.Error())
+					}
+				}(mgr)
+			}
+		}
+	}
+}
+
+// liveBackup respalda el mundo con el servidor corriendo: persiste el
+// mundo (save-all flush), pausa el autosave (save-off), comprime y lo
+// reactiva (save-on). Los archivos bloqueados por el proceso se saltan.
+func (a *app) liveBackup(mgr *server.Manager, inst config.Instance) {
+	world := worldName(inst)
+	worldDir := filepath.Join(inst.Dir, world)
+	if _, err := os.Stat(worldDir); err != nil {
+		return
+	}
+	name := backup.Name(world, time.Now())
+	a.appendLog(inst.Name, "[mc-tui] Scheduled backup starting: "+name)
+	go func() {
+		_ = mgr.Send("save-all flush")
+		_ = mgr.Send("save-off")
+		// Margen para que el server termine de escribir el flush.
+		time.Sleep(3 * time.Second)
+		skipped, err := backup.Create(worldDir, filepath.Join(inst.Dir, backup.Dir, name))
+		_ = mgr.Send("save-on")
+		if err != nil {
+			a.appendLog(inst.Name, "[mc-tui] Scheduled backup failed: "+err.Error())
+			return
+		}
+		msg := fmt.Sprintf("[mc-tui] Scheduled backup done: %s/%s", backup.Dir, name)
+		if skipped > 0 {
+			msg += fmt.Sprintf(" (%d locked files skipped)", skipped)
+		}
+		a.appendLog(inst.Name, msg)
+	}()
 }
 
 // worldName lee level-name de server.properties ("world" por defecto).

@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
@@ -192,6 +193,120 @@ func (a *app) memKeyMap() tui.KeyMap {
 		}),
 		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.memCommit() }),
 		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.memClose() }),
+	}
+}
+
+// schOpen abre el editor de schedule (v0.3.0) con los valores actuales:
+// paso 1 horas entre backups (vacío = off), paso 2 hora de restart diario
+// HH:MM (vacío = off).
+func (a *app) schOpen() {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	inst, ok := a.store.Get(mgr.Instance().Name)
+	if !ok {
+		return
+	}
+	if inst.BackupHours > 0 {
+		a.schBackup.Set(strconv.Itoa(inst.BackupHours))
+	} else {
+		a.schBackup.Set("")
+	}
+	a.schRestart.Set(inst.RestartTime)
+	a.schStep.Set(0)
+	a.schMsg.Set("")
+	a.schActive.Set(true)
+}
+
+func (a *app) schClose() {
+	a.schActive.Set(false)
+	a.schMsg.Set("")
+}
+
+// schCommit valida y persiste el schedule de la instancia.
+func (a *app) schCommit() {
+	mgr := a.current()
+	if mgr == nil {
+		a.schClose()
+		return
+	}
+	hours := 0
+	if s := a.schBackup.Get(); s != "" {
+		h, err := strconv.Atoi(s)
+		if err != nil || h <= 0 {
+			a.schStep.Set(0)
+			a.schMsg.Set("Backup hours must be a positive number (empty = off)")
+			return
+		}
+		hours = h
+	}
+	restart := a.schRestart.Get()
+	if restart != "" {
+		if _, err := time.Parse("15:04", restart); err != nil {
+			a.schMsg.Set("Restart time must be HH:MM, e.g. 04:30 (empty = off)")
+			return
+		}
+	}
+	inst, ok := a.store.Get(mgr.Instance().Name)
+	if !ok {
+		a.schClose()
+		return
+	}
+	inst.BackupHours = hours
+	inst.RestartTime = restart
+	if err := a.store.Update(inst); err != nil {
+		a.schMsg.Set("Error: " + err.Error())
+		return
+	}
+	if err := a.store.Save(); err != nil {
+		a.schMsg.Set("Error: " + err.Error())
+		return
+	}
+	_ = mgr.SetInstance(inst)
+	switch {
+	case hours > 0 && restart != "":
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Schedule: backup every %dh, daily restart at %s", hours, restart))
+	case hours > 0:
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Schedule: backup every %dh", hours))
+	case restart != "":
+		a.appendLog(inst.Name, "[mc-tui] Schedule: daily restart at "+restart)
+	default:
+		a.appendLog(inst.Name, "[mc-tui] Schedule cleared")
+	}
+	a.schClose()
+}
+
+func (a *app) schKeyMap() tui.KeyMap {
+	editing := a.schBackup
+	valid := func(r rune) bool { return r >= '0' && r <= '9' }
+	if a.schStep.Get() == 1 {
+		editing = a.schRestart
+		valid = func(r rune) bool { return (r >= '0' && r <= '9') || r == ':' }
+	}
+	return tui.KeyMap{
+		tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+			if valid(ke.Rune) {
+				editing.Update(func(s string) string { return s + string(ke.Rune) })
+			}
+		}),
+		tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+			editing.Update(func(s string) string {
+				if len(s) == 0 {
+					return s
+				}
+				return s[:len(s)-1]
+			})
+		}),
+		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
+			if a.schStep.Get() == 0 {
+				a.schMsg.Set("")
+				a.schStep.Set(1)
+				return
+			}
+			a.schCommit()
+		}),
+		tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.schClose() }),
 	}
 }
 

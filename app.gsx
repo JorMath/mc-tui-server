@@ -125,6 +125,38 @@ templ FooterBar(a *app) {
 			<span class="text-cyan font-bold">Esc</span>
 			<span class="font-dim">cancels</span>
 		</div>
+	} else if a.schActive.Get() {
+		<div class="flex gap-1 shrink-0 px-1">
+			if a.schStep.Get() == 0 {
+				<span class="text-cyan font-bold">{fmt.Sprintf("Backup every N hours for %s (empty = off):", a.currentName())}</span>
+				<span>{a.schBackup.Get()}</span>
+			} else {
+				<span class="text-cyan font-bold">Daily restart at HH:MM (empty = off):</span>
+				<span>{a.schRestart.Get()}</span>
+			}
+			<span class="text-cyan blink">_</span>
+			if a.schMsg.Get() != "" {
+				<span class="text-red">{a.schMsg.Get()}</span>
+			}
+			<span class="text-cyan font-bold">Enter</span>
+			if a.schStep.Get() == 0 {
+				<span class="font-dim">next</span>
+			} else {
+				<span class="font-dim">saves</span>
+			}
+			<span class="font-dim">|</span>
+			<span class="text-cyan font-bold">Esc</span>
+			<span class="font-dim">cancels</span>
+		</div>
+	} else if a.pkConfirm.Get() != "" {
+		<div class="flex gap-1 shrink-0 px-1">
+			<span class="text-yellow font-bold">{a.pkConfirm.Get()}</span>
+			<span class="text-yellow font-bold">y</span>
+			<span class="font-dim">update</span>
+			<span class="font-dim">|</span>
+			<span class="text-yellow font-bold">n/Esc</span>
+			<span class="font-dim">cancel</span>
+		</div>
 	} else if a.delTarget.Get() != "" {
 		<div class="flex gap-1 shrink-0 px-1">
 			<span class="text-red font-bold">{fmt.Sprintf("Delete instance %q and ALL its files (worlds included)?", a.delTarget.Get())}</span>
@@ -156,6 +188,8 @@ templ (a *app) Render() {
 					@FilesView(a)
 				} else if a.mrOpen.Get() {
 					@ModrinthView(a)
+				} else if a.plOpen.Get() {
+					@PlayersView(a)
 				} else {
 					@ConsoleView(a)
 				}

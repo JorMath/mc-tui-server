@@ -33,8 +33,12 @@ func TestCreateAndRestoreRoundTrip(t *testing.T) {
 	writeFile(t, filepath.Join(world, "datapacks", "dp.zip"), "dp")
 
 	dest := filepath.Join(inst, Dir, Name("world", time.Now()))
-	if err := Create(world, dest); err != nil {
+	skipped, err := Create(world, dest)
+	if err != nil {
 		t.Fatalf("Create: %v", err)
+	}
+	if skipped != 0 {
+		t.Fatalf("skipped = %d, quiero 0", skipped)
 	}
 
 	// Se corrompe el mundo y se restaura.
@@ -57,8 +61,30 @@ func TestCreateAndRestoreRoundTrip(t *testing.T) {
 
 func TestCreateMissingWorldFails(t *testing.T) {
 	inst := t.TempDir()
-	if err := Create(filepath.Join(inst, "no-existe"), filepath.Join(inst, "b.zip")); err == nil {
+	if _, err := Create(filepath.Join(inst, "no-existe"), filepath.Join(inst, "b.zip")); err == nil {
 		t.Fatal("mundo inexistente debe fallar")
+	}
+}
+
+func TestCreateSkipsLockedFiles(t *testing.T) {
+	inst := t.TempDir()
+	world := filepath.Join(inst, "world")
+	writeFile(t, filepath.Join(world, "level.dat"), "nivel")
+	writeFile(t, filepath.Join(world, "session.lock"), "lock")
+	// Abrir el archivo en modo exclusivo simula el lock del proceso java.
+	locked, err := os.OpenFile(filepath.Join(world, "session.lock"), os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { locked.Close() })
+	// En Windows el open exclusivo de Go no bloquea lecturas; el test
+	// verifica al menos que un mundo con archivos abiertos se respalda.
+	skipped, err := Create(world, filepath.Join(inst, Dir, "b.zip"))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if skipped > 1 {
+		t.Fatalf("skipped = %d", skipped)
 	}
 }
 

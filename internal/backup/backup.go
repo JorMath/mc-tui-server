@@ -23,21 +23,23 @@ func Name(world string, now time.Time) string {
 }
 
 // Create comprime worldDir (recursivo) en destZip, con rutas relativas a
-// la raíz del mundo. Crea los directorios padre del zip.
-func Create(worldDir, destZip string) error {
+// la raíz del mundo. Crea los directorios padre del zip. Los archivos que
+// no se pueden abrir (p. ej. session.lock, bloqueado por el proceso java
+// durante un backup en caliente) se saltan y se cuentan en skipped.
+func Create(worldDir, destZip string) (skipped int, err error) {
 	info, err := os.Stat(worldDir)
 	if err != nil {
-		return fmt.Errorf("world folder: %w", err)
+		return 0, fmt.Errorf("world folder: %w", err)
 	}
 	if !info.IsDir() {
-		return fmt.Errorf("%s is not a folder", worldDir)
+		return 0, fmt.Errorf("%s is not a folder", worldDir)
 	}
 	if err := os.MkdirAll(filepath.Dir(destZip), 0o755); err != nil {
-		return fmt.Errorf("creating backups folder: %w", err)
+		return 0, fmt.Errorf("creating backups folder: %w", err)
 	}
 	f, err := os.Create(destZip)
 	if err != nil {
-		return fmt.Errorf("creating %s: %w", destZip, err)
+		return 0, fmt.Errorf("creating %s: %w", destZip, err)
 	}
 	defer f.Close()
 	w := zip.NewWriter(f)
@@ -49,6 +51,12 @@ func Create(worldDir, destZip string) error {
 		if d.IsDir() {
 			return nil
 		}
+		src, err := os.Open(path)
+		if err != nil {
+			skipped++
+			return nil
+		}
+		defer src.Close()
 		rel, err := filepath.Rel(worldDir, path)
 		if err != nil {
 			return err
@@ -57,24 +65,17 @@ func Create(worldDir, destZip string) error {
 		if err != nil {
 			return err
 		}
-		src, err := os.Open(path)
-		if err != nil {
-			// session.lock puede estar bloqueado si el server corre; el
-			// caller exige servidor detenido, así que esto es un error real.
-			return err
-		}
-		defer src.Close()
 		_, err = io.Copy(entry, src)
 		return err
 	})
 	if err != nil {
 		w.Close()
-		return fmt.Errorf("zipping %s: %w", worldDir, err)
+		return skipped, fmt.Errorf("zipping %s: %w", worldDir, err)
 	}
 	if err := w.Close(); err != nil {
-		return fmt.Errorf("finishing %s: %w", destZip, err)
+		return skipped, fmt.Errorf("finishing %s: %w", destZip, err)
 	}
-	return nil
+	return skipped, nil
 }
 
 // Restore reemplaza worldDir con el contenido del zip (zip-slip safe).

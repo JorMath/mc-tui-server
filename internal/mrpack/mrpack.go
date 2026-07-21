@@ -21,9 +21,15 @@ type Env struct {
 	Server string `json:"server"`
 }
 
+// Hashes son los checksums que declara el índice para un archivo.
+type Hashes struct {
+	SHA1 string `json:"sha1"`
+}
+
 // IndexFile es un archivo del modpack a descargar en la instancia.
 type IndexFile struct {
 	Path      string   `json:"path"`
+	Hashes    Hashes   `json:"hashes"`
 	Env       *Env     `json:"env"`
 	Downloads []string `json:"downloads"`
 	FileSize  int64    `json:"fileSize"`
@@ -127,6 +133,35 @@ func (ix Index) ServerFiles() ([]IndexFile, error) {
 		out = append(out, f)
 	}
 	return out, nil
+}
+
+// IndexCopyName es el archivo donde la instancia guarda la copia del
+// índice del pack instalado, para poder diffear al actualizar.
+const IndexCopyName = ".mc-tui-pack.json"
+
+// WriteIndex guarda una copia del índice en path.
+func WriteIndex(ix Index, path string) error {
+	data, err := json.MarshalIndent(ix, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encoding pack index: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", path, err)
+	}
+	return nil
+}
+
+// LoadIndex lee una copia del índice guardada con WriteIndex.
+func LoadIndex(path string) (Index, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return Index{}, err
+	}
+	var ix Index
+	if err := json.Unmarshal(data, &ix); err != nil {
+		return Index{}, fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return ix, nil
 }
 
 // ExtractOverrides copia overrides/ y luego server-overrides/ del .mrpack

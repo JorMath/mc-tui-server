@@ -39,6 +39,14 @@ type Instance struct {
 	Version  string     `json:"version"`
 	// AutoRestart reinicia la instancia automáticamente si crashea.
 	AutoRestart bool `json:"auto_restart,omitempty"`
+	// BackupHours respalda el mundo cada N horas mientras corre (0 = off).
+	BackupHours int `json:"backup_hours,omitempty"`
+	// RestartTime reinicia a diario a esta hora "HH:MM" si corre ("" = off).
+	RestartTime string `json:"restart_time,omitempty"`
+	// PackID/PackVerID identifican el modpack de Modrinth del que se creó
+	// la instancia, para poder actualizarlo (vacíos si no aplica).
+	PackID    string `json:"pack_id,omitempty"`
+	PackVerID string `json:"pack_version,omitempty"`
 }
 
 // Store maneja la colección de instancias respaldada por un archivo JSON.

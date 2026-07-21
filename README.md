@@ -17,7 +17,12 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **Players online** — running instances are pinged via the server-list
   protocol every 5s; the sidebar shows `players N/M` next to CPU/RAM.
 - **World backups** — `b` zips the active world into `backups/` with a
-  timestamp; the file manager's Backups tab restores or deletes them.
+  timestamp; the file manager's Backups tab restores or deletes them. With
+  `S` you can schedule automatic backups every N hours (done safely while
+  running via `save-off`/`save-on`) and a daily restart at a fixed time.
+- **Players** — `p` manages the whitelist, ops and bans per instance: live
+  commands when the server runs, direct JSON edits (with the right UUID
+  for online or offline mode) when it's stopped.
 - **Interactive console** — live server log with a command bar to send
   commands straight to the server's stdin.
 - **Metrics** — per-instance CPU and RAM usage refreshed every 500ms.
@@ -39,6 +44,9 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   pack's server files and overrides, then sets up the loader runtime —
   Fabric's server launcher directly, or by running the official
   Forge/NeoForge/Quilt installer (needs Java, which you already have).
+  When the pack publishes a new version, `U` updates the instance in place:
+  world backup first, then an index diff (changed files re-downloaded,
+  removed ones deleted) and a loader reinstall if it changed.
 - **Multi-instance** — manage as many local servers as you want; configs
   are stored as JSON in your user config directory. Rename, delete (with
   confirmation) or change the memory of an instance right from the sidebar.
@@ -122,6 +130,9 @@ mc-tui-server -version   # print the version and exit
 | `M` | change the instance's memory (MB, applies on next start) |
 | `a` | toggle auto-restart on crash for the instance (shown as `↻`) |
 | `b` | back up the active world into `backups/` (server must be stopped) |
+| `p` | players: whitelist / ops / bans (live commands while running) |
+| `S` | schedule automatic backups (every N hours) and a daily restart |
+| `U` | update a modpack instance to the pack's latest version (backs up the world first) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
 | `q` | quit (running servers are stopped gracefully) |

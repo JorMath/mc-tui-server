@@ -105,14 +105,24 @@ type app struct {
 	memText   *tui.State[string]
 	memMsg    *tui.State[string]
 
+	// Editor de schedule (v0.3.0): backup cada N horas y restart diario.
+	schActive  *tui.State[bool]
+	schStep    *tui.State[int]
+	schBackup  *tui.State[string]
+	schRestart *tui.State[string]
+	schMsg     *tui.State[string]
+
 	collector *metrics.Collector
 	samples   *tui.State[map[string]metrics.Sample]
 	// pings guarda el server-list-ping de las instancias corriendo.
 	pings *tui.State[map[string]mcping.Status]
-	// lastPIDs, crashTimes y pingTick solo se tocan desde el timer de refresh.
-	lastPIDs   map[string]int
-	crashTimes map[string][]time.Time
-	pingTick   int
+	// lastPIDs, crashTimes, pingTick, lastBackup y lastRestartDay solo se
+	// tocan desde el timer de refresh.
+	lastPIDs       map[string]int
+	crashTimes     map[string][]time.Time
+	pingTick       int
+	lastBackup     map[string]time.Time
+	lastRestartDay map[string]string
 
 	// Estado del asistente. wizGen invalida goroutines de un asistente
 	// cancelado para que no re-abran la UI.
@@ -171,6 +181,21 @@ type app struct {
 	// mrUpd (el mutex del State ordena la publicación) y se lee al aplicar.
 	mrUpd     *tui.State[bool]
 	mrPending []pendingUpdate
+
+	// Actualización de modpack (v0.3.0): pkConfirm es el texto de la
+	// pregunta ("" = sin diálogo); pkPending sigue el mismo patrón de
+	// publicación que mrPending.
+	pkConfirm *tui.State[string]
+	pkPending modrinth.PackVersion
+
+	// Panel de jugadores (v0.3.0): whitelist, ops y bans.
+	plOpen   *tui.State[bool]
+	plTab    *tui.State[int]
+	plList   *tui.State[[]string]
+	plIdx    *tui.State[int]
+	plAdding *tui.State[bool]
+	plText   *tui.State[string]
+	plMsg    *tui.State[string]
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -182,28 +207,35 @@ func App(store *config.Store, managers []*server.Manager) *app {
 	}
 	var reg []tui.AppBinder
 	a := &app{
-		store:      store,
-		dataDir:    filepath.Dir(store.Path()),
-		managers:   newState(&reg, managers),
-		splash:     newState(&reg, true),
-		logCh:      make(chan logEntry, 2048),
-		selected:   newState(&reg, 0),
-		statuses:   newState(&reg, statuses),
-		logs:       newState(&reg, logs),
-		cmdActive:  newState(&reg, false),
-		cmdText:    newState(&reg, ""),
-		renActive:  newState(&reg, false),
-		renText:    newState(&reg, ""),
-		renMsg:     newState(&reg, ""),
-		delTarget:  newState(&reg, ""),
-		memActive:  newState(&reg, false),
-		memText:    newState(&reg, ""),
-		memMsg:     newState(&reg, ""),
-		collector:  metrics.NewCollector(),
-		samples:    newState(&reg, map[string]metrics.Sample{}),
-		pings:      newState(&reg, map[string]mcping.Status{}),
-		lastPIDs:   map[string]int{},
-		crashTimes: map[string][]time.Time{},
+		store:          store,
+		dataDir:        filepath.Dir(store.Path()),
+		managers:       newState(&reg, managers),
+		splash:         newState(&reg, true),
+		logCh:          make(chan logEntry, 2048),
+		selected:       newState(&reg, 0),
+		statuses:       newState(&reg, statuses),
+		logs:           newState(&reg, logs),
+		cmdActive:      newState(&reg, false),
+		cmdText:        newState(&reg, ""),
+		renActive:      newState(&reg, false),
+		renText:        newState(&reg, ""),
+		renMsg:         newState(&reg, ""),
+		delTarget:      newState(&reg, ""),
+		memActive:      newState(&reg, false),
+		memText:        newState(&reg, ""),
+		memMsg:         newState(&reg, ""),
+		schActive:      newState(&reg, false),
+		schStep:        newState(&reg, 0),
+		schBackup:      newState(&reg, ""),
+		schRestart:     newState(&reg, ""),
+		schMsg:         newState(&reg, ""),
+		collector:      metrics.NewCollector(),
+		samples:        newState(&reg, map[string]metrics.Sample{}),
+		pings:          newState(&reg, map[string]mcping.Status{}),
+		lastPIDs:       map[string]int{},
+		crashTimes:     map[string][]time.Time{},
+		lastBackup:     map[string]time.Time{},
+		lastRestartDay: map[string]string{},
 
 		wizStep:     newState(&reg, wizOff),
 		wizGen:      newState(&reg, 0),
@@ -249,6 +281,15 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		mrGen:     newState(&reg, 0),
 		mrMsg:     newState(&reg, ""),
 		mrUpd:     newState(&reg, false),
+		pkConfirm: newState(&reg, ""),
+
+		plOpen:   newState(&reg, false),
+		plTab:    newState(&reg, 0),
+		plList:   newState(&reg, []string{}),
+		plIdx:    newState(&reg, 0),
+		plAdding: newState(&reg, false),
+		plText:   newState(&reg, ""),
+		plMsg:    newState(&reg, ""),
 	}
 	a.binders = reg
 	for _, m := range managers {
@@ -382,8 +423,9 @@ func (a *app) appendLog(name, line string) {
 func (a *app) mainHints() []hint {
 	return []hint{
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
-		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"b", "backup"},
-		{"n", "new"}, {"a", "auto-restart"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
+		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
+		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
+		{"U", "update pack"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"}, {"q", "quit"},
 	}
 }
 
@@ -407,6 +449,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.mrOpen.Get() {
 		return a.mrKeyMap()
 	}
+	if a.plOpen.Get() {
+		return a.plKeyMap()
+	}
 	if a.cmdActive.Get() {
 		return tui.KeyMap{
 			tui.OnStop(tui.AnyRune, a.appendCmdChar),
@@ -421,8 +466,14 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.memActive.Get() {
 		return a.memKeyMap()
 	}
+	if a.schActive.Get() {
+		return a.schKeyMap()
+	}
 	if a.delTarget.Get() != "" {
 		return a.delKeyMap()
+	}
+	if a.pkConfirm.Get() != "" {
+		return a.pkKeyMap()
 	}
 	return tui.KeyMap{
 		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
@@ -431,10 +482,13 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
 		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
 		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
+		tui.On(tui.Rune('p'), func(ke tui.KeyEvent) { a.plOpenPanel() }),
 		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
 		tui.On(tui.Rune('M'), func(ke tui.KeyEvent) { a.memOpen() }),
 		tui.On(tui.Rune('a'), func(ke tui.KeyEvent) { a.toggleAutoRestart() }),
 		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
+		tui.On(tui.Rune('S'), func(ke tui.KeyEvent) { a.schOpen() }),
+		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.pkUpdateAsk() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),

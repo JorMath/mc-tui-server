@@ -304,7 +304,7 @@ func (a *app) backupWorld() {
 	a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Creating backup %s...", name))
 	go func() {
 		dest := filepath.Join(inst.Dir, backup.Dir, name)
-		if err := backup.Create(worldDir, dest); err != nil {
+		if _, err := backup.Create(worldDir, dest); err != nil {
 			a.appendLog(inst.Name, "[mc-tui] Backup failed: "+err.Error())
 			return
 		}
