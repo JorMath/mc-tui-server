@@ -137,3 +137,34 @@ func TestWorldOf(t *testing.T) {
 		}
 	}
 }
+
+func TestPruneKeepsNewest(t *testing.T) {
+	inst := t.TempDir()
+	names := []string{
+		"world-20260101-000000.zip",
+		"world-20260201-000000.zip",
+		"world-20260301-000000.zip",
+		"world-20260401-000000.zip",
+	}
+	for _, n := range names {
+		writeFile(t, filepath.Join(inst, Dir, n), "x")
+	}
+	removed, err := Prune(inst, 2)
+	if err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if removed != 2 {
+		t.Fatalf("removed = %d, quiero 2", removed)
+	}
+	left, _ := List(inst)
+	if len(left) != 2 || left[0] != "world-20260401-000000.zip" || left[1] != "world-20260301-000000.zip" {
+		t.Fatalf("quedaron %v", left)
+	}
+	// keep 0 = ilimitado; keep mayor que lo existente no borra nada.
+	if n, _ := Prune(inst, 0); n != 0 {
+		t.Fatalf("Prune(0) borró %d", n)
+	}
+	if n, _ := Prune(inst, 10); n != 0 {
+		t.Fatalf("Prune(10) borró %d", n)
+	}
+}

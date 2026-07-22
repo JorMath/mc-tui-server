@@ -416,3 +416,44 @@ func TestLatestFileWithDepsParsesDependencies(t *testing.T) {
 		t.Fatalf("deps[0] = %+v", deps[0])
 	}
 }
+
+func TestProjectVersionsListsCompatible(t *testing.T) {
+	srv := versionServer(t, `[
+		{"name":"v2","version_number":"2.0.0","version_type":"release","game_versions":["1.21.4"],
+		 "files":[{"url":"http://x/v2.jar","filename":"v2.jar","primary":true}],
+		 "dependencies":[{"project_id":"DEP1","dependency_type":"required"}]},
+		{"name":"sin archivos","version_number":"1.5.0","version_type":"beta","game_versions":["1.21.4"],"files":[]},
+		{"name":"v1","version_number":"1.0.0","version_type":"release","game_versions":["1.21.4"],
+		 "files":[{"url":"http://x/v1.jar","filename":"v1.jar","primary":true}]}
+	]`, nil)
+	c := &Client{BaseURL: srv.URL}
+	vers, err := c.ProjectVersions(ctx(), "AAAA", config.Fabric, "1.21.4")
+	if err != nil {
+		t.Fatalf("ProjectVersions: %v", err)
+	}
+	if len(vers) != 2 || vers[0].VersionNumber != "2.0.0" || vers[1].File.Filename != "v1.jar" {
+		t.Fatalf("vers = %+v", vers)
+	}
+	if len(vers[0].Deps) != 1 || vers[0].Deps[0].ProjectID != "DEP1" {
+		t.Fatalf("deps = %+v", vers[0].Deps)
+	}
+}
+
+func TestLatestByHashCarriesChangelog(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/version_files/update", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"aaa":{"version_number":"2.1.0","changelog":"- Fixed crash\n- Faster",
+			"files":[{"url":"https://cdn/n.jar","filename":"n.jar","primary":true,"hashes":{"sha1":"bbb"}}]}}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	c := &Client{BaseURL: srv.URL}
+	latest, err := c.LatestByHash(ctx(), config.Forge, "1.20.1", []string{"aaa"})
+	if err != nil {
+		t.Fatalf("LatestByHash: %v", err)
+	}
+	f := latest["aaa"]
+	if f.VersionNumber != "2.1.0" || f.Changelog == "" {
+		t.Fatalf("file = %+v", f)
+	}
+}

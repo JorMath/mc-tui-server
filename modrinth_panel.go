@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/assets"
@@ -49,6 +50,9 @@ func (a *app) mrOpenPanel() {
 	a.mrMsg.Set("")
 	a.mrPending = nil
 	a.mrUpd.Set(false)
+	a.mrVerMode.Set(false)
+	a.mrVers.Set([]modrinth.ModVersion{})
+	a.mrVerIdx.Set(0)
 	a.mrTyping.Set(true)
 	a.mrOpen.Set(true)
 }
@@ -75,6 +79,7 @@ func (a *app) mrToggleKind() {
 	a.mrKind.Set(next)
 	a.mrResults.Set([]modrinth.Project{})
 	a.mrIdx.Set(0)
+	a.mrVerMode.Set(false)
 	a.mrMsg.Set("")
 	if !a.mrTyping.Get() && a.mrQuery.Get() != "" {
 		a.mrSearch()
@@ -176,43 +181,116 @@ func (a *app) mrInstall() {
 		} else {
 			file, deps, err = a.mr.LatestFileWithDeps(ctx, project.ID, inst.Type, inst.Version)
 		}
-		if err == nil {
-			dest := filepath.Join(inst.Dir, sub, file.Filename)
-			err = download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
-				if a.mrGen.Get() != gen {
-					return
-				}
-				if total > 0 {
-					a.mrMsg.Set(fmt.Sprintf("Downloading %s... %d%%", file.Filename, done*100/total))
-				}
-			})
+		if err != nil {
+			if a.mrGen.Get() == gen {
+				a.mrBusy.Set(false)
+				a.mrMsg.Set("Error: " + err.Error())
+			}
+			return
 		}
+		a.mrInstallFile(ctx, gen, inst, sub, kind, project.Title, project.ID, file, deps)
+	}()
+}
+
+// mrInstallFile descarga un archivo concreto (y sus dependencias si es un
+// mod/plugin) y reporta el resultado. Corre dentro de una goroutine con
+// mrBusy activo y lo apaga al terminar.
+func (a *app) mrInstallFile(ctx context.Context, gen int, inst config.Instance, sub, kind, title, projectID string, file modrinth.File, deps []modrinth.Dependency) {
+	dest := filepath.Join(inst.Dir, sub, file.Filename)
+	err := download.DownloadFile(ctx, nil, file.URL, dest, func(done, total int64) {
 		if a.mrGen.Get() != gen {
 			return
 		}
-		if err != nil {
-			a.mrBusy.Set(false)
-			a.mrMsg.Set("Error: " + err.Error())
-			return
+		if total > 0 {
+			a.mrMsg.Set(fmt.Sprintf("Downloading %s... %d%%", file.Filename, done*100/total))
 		}
-		installedDeps := 0
-		if kind != "datapacks" {
-			installedDeps = a.mrInstallDeps(ctx, gen, inst, sub, project.ID, deps)
-		}
+	})
+	if a.mrGen.Get() != gen {
+		return
+	}
+	if err != nil {
+		a.mrBusy.Set(false)
+		a.mrMsg.Set("Error: " + err.Error())
+		return
+	}
+	installedDeps := 0
+	if kind != "datapacks" {
+		installedDeps = a.mrInstallDeps(ctx, gen, inst, sub, projectID, deps)
+	}
+	if a.mrGen.Get() != gen {
+		return
+	}
+	a.mrBusy.Set(false)
+	suffix := ""
+	if installedDeps > 0 {
+		suffix = fmt.Sprintf(" (+%d dependencies)", installedDeps)
+	}
+	if kind == "datapacks" {
+		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s · run /reload or restart to load it", file.Filename, filepath.ToSlash(sub)+"/"))
+	} else {
+		a.mrMsg.Set(fmt.Sprintf("Installed %s%s into %s/ · restart the server to load it", file.Filename, suffix, sub))
+	}
+	a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)%s", title, file.Filename, suffix))
+}
+
+// mrOpenVersions (tecla v) lista las versiones compatibles del proyecto
+// seleccionado para instalar una concreta en vez de la última.
+func (a *app) mrOpenVersions() {
+	mgr := a.current()
+	results := a.mrResults.Get()
+	idx := a.mrIdx.Get()
+	if mgr == nil || a.mrBusy.Get() || a.mrKind.Get() == "datapacks" || idx < 0 || idx >= len(results) {
+		return
+	}
+	inst := mgr.Instance()
+	project := results[idx]
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Fetching versions of %s...", project.Title))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		vers, err := a.mr.ProjectVersions(ctx, project.ID, inst.Type, inst.Version)
 		if a.mrGen.Get() != gen {
 			return
 		}
 		a.mrBusy.Set(false)
-		suffix := ""
-		if installedDeps > 0 {
-			suffix = fmt.Sprintf(" (+%d dependencies)", installedDeps)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
 		}
-		if kind == "datapacks" {
-			a.mrMsg.Set(fmt.Sprintf("Installed %s into %s · run /reload or restart to load it", file.Filename, filepath.ToSlash(sub)+"/"))
-		} else {
-			a.mrMsg.Set(fmt.Sprintf("Installed %s%s into %s/ · restart the server to load it", file.Filename, suffix, sub))
-		}
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)%s", project.Title, file.Filename, suffix))
+		a.mrVers.Set(vers)
+		a.mrVerIdx.Set(0)
+		a.mrVerMode.Set(true)
+		a.mrMsg.Set(fmt.Sprintf("%d versions of %s · Enter installs the selected one", len(vers), project.Title))
+	}()
+}
+
+// mrInstallVersion instala la versión elegida en el selector.
+func (a *app) mrInstallVersion() {
+	mgr := a.current()
+	results := a.mrResults.Get()
+	vers := a.mrVers.Get()
+	pIdx, vIdx := a.mrIdx.Get(), a.mrVerIdx.Get()
+	if mgr == nil || a.mrBusy.Get() || pIdx < 0 || pIdx >= len(results) || vIdx < 0 || vIdx >= len(vers) {
+		return
+	}
+	inst := mgr.Instance()
+	project := results[pIdx]
+	chosen := vers[vIdx]
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	kind := a.mrKind.Get()
+	gen := a.mrGen.Get()
+	a.mrVerMode.Set(false)
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Installing %s %s...", project.Title, chosen.VersionNumber))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		a.mrInstallFile(ctx, gen, inst, sub, kind, project.Title, project.ID, chosen.File, chosen.Deps)
 	}()
 }
 
@@ -412,9 +490,47 @@ func mrDownloadsText(n int) string {
 	}
 }
 
+// firstLine devuelve la primera línea no vacía de un texto, truncada.
+func firstLine(s string, limit int) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(line, "#-* "))
+		if line == "" {
+			continue
+		}
+		if r := []rune(line); len(r) > limit {
+			line = string(r[:limit]) + "…"
+		}
+		return line
+	}
+	return ""
+}
+
 func (a *app) mrItems() []listItem {
-	results := a.mrResults.Get()
 	limit := a.descLimit()
+	// Confirmación de update-all: se listan los cambios pendientes con su
+	// versión y la primera línea del changelog.
+	if a.mrUpd.Get() {
+		lines := make([]string, len(a.mrPending))
+		for i, u := range a.mrPending {
+			line := fmt.Sprintf("%s → %s [%s]", u.Old, u.File.Filename, u.File.VersionNumber)
+			if cl := firstLine(u.File.Changelog, limit); cl != "" {
+				line += " — " + cl
+			}
+			lines[i] = line
+		}
+		return fullItems(lines, -1)
+	}
+	// Selector de versiones de un proyecto.
+	if a.mrVerMode.Get() {
+		vers := a.mrVers.Get()
+		lines := make([]string, len(vers))
+		for i, v := range vers {
+			lines[i] = fmt.Sprintf("%s — MC %s [%s] (%s)",
+				v.VersionNumber, strings.Join(v.GameVersions, ", "), v.VersionType, v.File.Filename)
+		}
+		return fullItems(lines, a.mrVerIdx.Get())
+	}
+	results := a.mrResults.Get()
 	lines := make([]string, len(results))
 	for i, p := range results {
 		desc := p.Description
@@ -454,13 +570,16 @@ func (a *app) mrHints() []hint {
 	if a.mrUpd.Get() {
 		return []hint{{"y", "update all"}, {"n/Esc", "cancel"}}
 	}
+	if a.mrVerMode.Get() {
+		return []hint{{"↑/↓", "select"}, {"Enter", "install this version"}, {"Esc", "back"}}
+	}
 	var hints []hint
 	if a.mrTyping.Get() {
 		hints = []hint{{"Enter", "search"}}
 	} else {
 		hints = []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}}
 		if a.mrKind.Get() != "datapacks" {
-			hints = append(hints, hint{"u", "update all"})
+			hints = append(hints, hint{"v", "pick version"}, hint{"u", "update all"})
 		}
 	}
 	if a.mrHasKinds() {
@@ -480,6 +599,19 @@ func (a *app) mrKeyMap() tui.KeyMap {
 			tui.OnStop(tui.Rune('y'), func(ke tui.KeyEvent) { a.mrApplyUpdates() }),
 			tui.OnStop(tui.Rune('n'), cancel),
 			tui.OnStop(tui.KeyEscape, cancel),
+		}
+	}
+	if a.mrVerMode.Get() {
+		return tui.KeyMap{
+			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.mrMoveVer(-1) }),
+			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.mrMoveVer(1) }),
+			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.mrMoveVer(-10) }),
+			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.mrMoveVer(10) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstallVersion() }),
+			tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) {
+				a.mrVerMode.Set(false)
+				a.mrMsg.Set("")
+			}),
 		}
 	}
 	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
@@ -511,7 +643,25 @@ func (a *app) mrKeyMap() tui.KeyMap {
 		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.mrInstall() }),
 		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
 		tui.OnStop(tui.Rune('u'), func(ke tui.KeyEvent) { a.mrUpdateAll() }),
+		tui.OnStop(tui.Rune('v'), func(ke tui.KeyEvent) { a.mrOpenVersions() }),
 		tab,
 		esc,
 	}
+}
+
+func (a *app) mrMoveVer(delta int) {
+	n := len(a.mrVers.Get())
+	if n == 0 {
+		return
+	}
+	a.mrVerIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i >= n {
+			i = n - 1
+		}
+		return i
+	})
 }

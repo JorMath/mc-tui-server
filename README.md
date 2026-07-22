@@ -19,7 +19,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **World backups** — `b` zips the active world into `backups/` with a
   timestamp; the file manager's Backups tab restores or deletes them. With
   `S` you can schedule automatic backups every N hours (done safely while
-  running via `save-off`/`save-on`) and a daily restart at a fixed time.
+  running via `save-off`/`save-on`), cap how many backups to keep, and set
+  a daily restart — players get in-game warnings 5 and 1 minutes before.
 - **Players** — `p` manages the whitelist, ops and bans per instance: live
   commands when the server runs, direct JSON edits (with the right UUID
   for online or offline mode) when it's stopped.
@@ -41,9 +42,11 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
   and datapacks on every type (installed into the active world); `Tab`
   switches the content type. Installing a mod also pulls in its required
-  dependencies (Fabric API and friends) automatically. Press `u` to check
-  every installed mod or plugin for newer compatible versions (matched by
-  file hash) and update them all after confirming.
+  dependencies (Fabric API and friends) automatically, and `v` lets you
+  pick a specific version instead of the latest. Press `u` to check every
+  installed mod or plugin for newer compatible versions (matched by file
+  hash) and update them all after confirming — the confirmation lists each
+  change with its version and changelog.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
@@ -63,15 +66,22 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - A terminal with truecolor support and a font that includes block
   characters (Windows Terminal, or any modern Linux terminal). The layout
   adapts to the window size on the fly — sidebar, splash and hint bar
-  scale down on small terminals.
+  scale down on small terminals. The mouse works too: click instances and
+  tabs, scroll lists and the console with the wheel.
 
 ## Install
+
+### Scoop (Windows)
+
+```powershell
+scoop install https://raw.githubusercontent.com/JorMath/mc-tui-server/main/packaging/scoop/mc-tui-server.json
+```
 
 ### Prebuilt binaries
 
 Grab the binary for your platform from the
-[Releases page](https://github.com/JorMath/mc-tui-server/releases), put it
-somewhere on your PATH and run it:
+[Releases page](https://github.com/JorMath/mc-tui-server/releases) (each
+release ships a `checksums.txt`), put it somewhere on your PATH and run it:
 
 ```
 mc-tui-server_windows_amd64.exe   # Windows
@@ -138,6 +148,7 @@ mc-tui-server -version   # print the version and exit
 | `p` | players: whitelist / ops / bans (live commands while running) |
 | `S` | schedule automatic backups (every N hours) and a daily restart |
 | `U` | update a modpack instance to the pack's latest version (backs up the world first) |
+| `C` | clone the instance into a sandbox copy (server must be stopped) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |
 | `PgUp/PgDn · End` | scroll the console / follow the live log |

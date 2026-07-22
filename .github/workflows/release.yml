@@ -19,6 +19,8 @@ jobs:
         run: go test ./...
       - name: Build binaries
         run: bash scripts/build.sh "${GITHUB_REF_NAME}"
+      - name: Checksums
+        run: cd dist && sha256sum mc-tui-server_* > checksums.txt
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
@@ -27,3 +29,4 @@ jobs:
             dist/mc-tui-server_windows_amd64.exe
             dist/mc-tui-server_linux_amd64
             dist/mc-tui-server_linux_arm64
+            dist/checksums.txt

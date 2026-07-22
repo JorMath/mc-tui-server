@@ -1,0 +1,9 @@
+# Manifiesto de versión de winget. Para publicar en winget hay que enviar
+# los tres manifiestos (este, .installer.yaml y .locale.en-US.yaml) como PR
+# a https://github.com/microsoft/winget-pkgs bajo
+# manifests/j/JorMath/mc-tui-server/<versión>/ — ver packaging/README.md.
+PackageIdentifier: JorMath.mc-tui-server
+PackageVersion: 0.3.1
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.6.0

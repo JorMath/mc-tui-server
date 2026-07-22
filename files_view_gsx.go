@@ -14,6 +14,7 @@ type FilesViewView struct {
 	watchers  []tui.Watcher
 	bindApp   func(*tui.App)
 	unbindApp func()
+	TabRefs   map[string]*tui.Element
 }
 
 func (v *FilesViewView) UnbindApp() {
@@ -43,6 +44,7 @@ func (v *FilesViewView) UpdateProps(fresh tui.Component) {
 	v.watchers = f.watchers
 	v.bindApp = f.bindApp
 	v.unbindApp = f.unbindApp
+	v.TabRefs = f.TabRefs
 }
 
 var _ tui.AppBinder = (*FilesViewView)(nil)
@@ -51,7 +53,7 @@ var _ tui.AppUnbinder = (*FilesViewView)(nil)
 
 var _ tui.PropsUpdater = (*FilesViewView)(nil)
 
-func FilesView(a *app) *FilesViewView {
+func FilesView(a *app, tabRefs *tui.RefMap[string]) *FilesViewView {
 	var view FilesViewView
 	var watchers []tui.Watcher
 
@@ -73,105 +75,42 @@ func FilesView(a *app) *FilesViewView {
 		tui.WithGap(1),
 		tui.WithFlexShrink(0),
 	)
-	__tui_3 := tui.New(
-		tui.WithText("1"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_3)
-	if a.fmTab.Get() == 0 {
+	for i, name := range fmTabNames {
+		_ = i
+		__tui_3 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
+		tabRefs.Put(name, __tui_3)
 		__tui_4 := tui.New(
-			tui.WithText("Properties"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+			tui.WithText(fmt.Sprintf("%d", i+1)),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_2.AddChild(__tui_4)
-	} else {
-		__tui_5 := tui.New(
-			tui.WithText("Properties"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_5)
-	}
-	__tui_6 := tui.New(
-		tui.WithText("2"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_6)
-	if a.fmTab.Get() == 1 {
-		__tui_7 := tui.New(
-			tui.WithText("Worlds"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_7)
-	} else {
-		__tui_8 := tui.New(
-			tui.WithText("Worlds"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_8)
-	}
-	__tui_9 := tui.New(
-		tui.WithText("3"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_9)
-	if a.fmTab.Get() == 2 {
-		__tui_10 := tui.New(
-			tui.WithText("Plugins/Mods"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_10)
-	} else {
-		__tui_11 := tui.New(
-			tui.WithText("Plugins/Mods"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_11)
-	}
-	__tui_12 := tui.New(
-		tui.WithText("4"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_12)
-	if a.fmTab.Get() == 3 {
-		__tui_13 := tui.New(
-			tui.WithText("Backups"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_13)
-	} else {
-		__tui_14 := tui.New(
-			tui.WithText("Backups"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_14)
-	}
-	__tui_15 := tui.New(
-		tui.WithText("5"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_15)
-	if a.fmTab.Get() == 4 {
-		__tui_16 := tui.New(
-			tui.WithText("Logs"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_16)
-	} else {
-		__tui_17 := tui.New(
-			tui.WithText("Logs"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_17)
+		__tui_3.AddChild(__tui_4)
+		if a.fmTab.Get() == i {
+			__tui_5 := tui.New(
+				tui.WithText(name),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+			)
+			__tui_3.AddChild(__tui_5)
+		} else {
+			__tui_6 := tui.New(
+				tui.WithText(name),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_3.AddChild(__tui_6)
+		}
+		__tui_2.AddChild(__tui_3)
 	}
 	__tui_0.AddChild(__tui_2)
 	if len(a.fmItems()) == 0 {
-		__tui_18 := tui.New(
+		__tui_7 := tui.New(
 			tui.WithText("(empty)"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_0.AddChild(__tui_18)
+		__tui_0.AddChild(__tui_7)
 	}
-	__tui_19 := tui.New(
+	__tui_8 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		tui.WithFlexGrow(1),
 		tui.WithScrollable(tui.ScrollVertical),
@@ -180,79 +119,79 @@ func FilesView(a *app) *FilesViewView {
 	for __idx_0, item := range a.fmItems() {
 		_ = __idx_0
 		if item.Sel {
-			__tui_20 := tui.New(
+			__tui_9 := tui.New(
 				tui.WithText(fmt.Sprintf("> %s", item.Text)),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_19.AddChild(__tui_20)
+			__tui_8.AddChild(__tui_9)
 		} else {
-			__tui_21 := tui.New(
+			__tui_10 := tui.New(
 				tui.WithText(fmt.Sprintf("  %s", item.Text)),
 			)
-			__tui_19.AddChild(__tui_21)
+			__tui_8.AddChild(__tui_10)
 		}
 	}
-	__tui_0.AddChild(__tui_19)
+	__tui_0.AddChild(__tui_8)
 	if a.fmEditing.Get() {
-		__tui_22 := tui.New(
+		__tui_11 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_23 := tui.New(
+		__tui_12 := tui.New(
 			tui.WithText(fmt.Sprintf("%s =", a.fmSelectedKey())),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_22.AddChild(__tui_23)
-		__tui_24 := tui.New(
+		__tui_11.AddChild(__tui_12)
+		__tui_13 := tui.New(
 			tui.WithText(a.fmEditText.Get()),
 		)
-		__tui_22.AddChild(__tui_24)
-		__tui_25 := tui.New(
+		__tui_11.AddChild(__tui_13)
+		__tui_14 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_22.AddChild(__tui_25)
-		__tui_26 := tui.New(
+		__tui_11.AddChild(__tui_14)
+		__tui_15 := tui.New(
 			tui.WithText("(Enter applies | Esc cancels)"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_22.AddChild(__tui_26)
-		__tui_0.AddChild(__tui_22)
+		__tui_11.AddChild(__tui_15)
+		__tui_0.AddChild(__tui_11)
 	}
 	if a.fmConfirm.Get() != "" {
-		__tui_27 := tui.New(
+		__tui_16 := tui.New(
 			tui.WithText(fmt.Sprintf("Delete %q permanently? (y = yes, n = no)", a.fmConfirm.Get())),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
 		)
-		__tui_0.AddChild(__tui_27)
+		__tui_0.AddChild(__tui_16)
 	}
 	if a.fmRestore.Get() != "" {
-		__tui_28 := tui.New(
+		__tui_17 := tui.New(
 			tui.WithText(fmt.Sprintf("Restore %q? The current world will be REPLACED (y = yes, n = no)", a.fmRestore.Get())),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
 		)
-		__tui_0.AddChild(__tui_28)
+		__tui_0.AddChild(__tui_17)
 	}
 	if a.fmMsg.Get() != "" {
-		__tui_29 := tui.New(
+		__tui_18 := tui.New(
 			tui.WithText(a.fmMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_29)
+		__tui_0.AddChild(__tui_18)
 	}
-	__tui_30 := HintsRow(a.fmHints(), false)
-	__tui_0.AddChild(__tui_30.Root)
+	__tui_19 := HintsRow(a.fmHints(), false)
+	__tui_0.AddChild(__tui_19.Root)
 
-	watchers = append(watchers, __tui_30.GetWatchers()...)
+	watchers = append(watchers, __tui_19.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_30).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_19).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_30).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_19).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}
@@ -262,6 +201,7 @@ func FilesView(a *app) *FilesViewView {
 		watchers:  watchers,
 		bindApp:   __bindApp,
 		unbindApp: __unbindApp,
+		TabRefs:   tabRefs.All(),
 	}
 	return &view
 }

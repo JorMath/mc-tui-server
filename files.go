@@ -23,6 +23,9 @@ import (
 
 const fmTabs = 5
 
+// fmTabNames son las pestañas del panel de archivos, en orden.
+var fmTabNames = []string{"Properties", "Worlds", "Plugins/Mods", "Backups", "Logs"}
+
 // fmLogsList lee los archivos de logs/ de la instancia: latest.log primero
 // y el resto de más nuevo a más viejo.
 func fmLogsList(instDir string) []string {
@@ -397,6 +400,7 @@ func (a *app) backupWorld() {
 		}
 		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Backup created: %s/%s (%dMB)",
 			backup.Dir, name, size/(1024*1024)))
+		a.pruneBackups(inst)
 	}()
 }
 
@@ -410,24 +414,14 @@ func (a *app) fmTitle() string {
 }
 
 func (a *app) fmTabName() string {
-	switch a.fmTab.Get() {
-	case 0:
-		return "Properties"
-	case 1:
-		return "Worlds"
-	case 2:
-		return "Plugins/Mods"
-	case 3:
-		return "Backups"
-	default:
-		if a.fmLogView.Get() {
-			logs := a.fmLogs.Get()
-			if i := a.fmLogIdx.Get(); i >= 0 && i < len(logs) {
-				return "Logs · " + logs[i]
-			}
+	tab := a.fmTab.Get()
+	if tab == 4 && a.fmLogView.Get() {
+		logs := a.fmLogs.Get()
+		if i := a.fmLogIdx.Get(); i >= 0 && i < len(logs) {
+			return "Logs · " + logs[i]
 		}
-		return "Logs"
 	}
+	return fmTabNames[tab]
 }
 
 // fmOpenLog carga el log seleccionado en el visor.

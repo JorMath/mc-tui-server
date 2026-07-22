@@ -77,8 +77,13 @@ type app struct {
 	binders []tui.AppBinder
 	// ui es la tui.App en ejecución; da acceso al tamaño de la terminal
 	// para que el layout se adapte en cada render. Se setea en BindApp.
-	ui       *tui.App
-	managers *tui.State[[]*server.Manager]
+	ui *tui.App
+	// RefMaps para el hit-testing del ratón (rellenados en cada render,
+	// con clave por nombre: el generador solo soporta claves string).
+	rowRefs   *tui.RefMap[string]
+	fmTabRefs *tui.RefMap[string]
+	plTabRefs *tui.RefMap[string]
+	managers  *tui.State[[]*server.Manager]
 	// splash se muestra al arrancar hasta pulsar una tecla o agotar los
 	// ticks del timer de refresh. splashTicks solo lo toca ese timer.
 	splash      *tui.State[bool]
@@ -109,10 +114,17 @@ type app struct {
 	memText   *tui.State[string]
 	memMsg    *tui.State[string]
 
-	// Editor de schedule (v0.3.0): backup cada N horas y restart diario.
+	// Clonado de instancias (v0.4.0), mismo patrón que el rename.
+	cloneActive *tui.State[bool]
+	cloneText   *tui.State[string]
+	cloneMsg    *tui.State[string]
+
+	// Editor de schedule (v0.3.0): backup cada N horas, retención y
+	// restart diario.
 	schActive  *tui.State[bool]
 	schStep    *tui.State[int]
 	schBackup  *tui.State[string]
+	schKeep    *tui.State[string]
 	schRestart *tui.State[string]
 	schMsg     *tui.State[string]
 
@@ -200,6 +212,10 @@ type app struct {
 	// mrUpd (el mutex del State ordena la publicación) y se lee al aplicar.
 	mrUpd     *tui.State[bool]
 	mrPending []pendingUpdate
+	// Selector de versión de un proyecto (tecla v).
+	mrVerMode *tui.State[bool]
+	mrVers    *tui.State[[]modrinth.ModVersion]
+	mrVerIdx  *tui.State[int]
 
 	// Actualización de modpack (v0.3.0): pkConfirm es el texto de la
 	// pregunta ("" = sin diálogo); pkPending sigue el mismo patrón de
@@ -231,6 +247,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 	a := &app{
 		store:          store,
 		dataDir:        filepath.Dir(store.Path()),
+		rowRefs:        tui.NewRefMap[string](),
+		fmTabRefs:      tui.NewRefMap[string](),
+		plTabRefs:      tui.NewRefMap[string](),
 		managers:       newState(&reg, managers),
 		splash:         newState(&reg, true),
 		logCh:          make(chan logEntry, 2048),
@@ -247,9 +266,13 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		memActive:      newState(&reg, false),
 		memText:        newState(&reg, ""),
 		memMsg:         newState(&reg, ""),
+		cloneActive:    newState(&reg, false),
+		cloneText:      newState(&reg, ""),
+		cloneMsg:       newState(&reg, ""),
 		schActive:      newState(&reg, false),
 		schStep:        newState(&reg, 0),
 		schBackup:      newState(&reg, ""),
+		schKeep:        newState(&reg, ""),
 		schRestart:     newState(&reg, ""),
 		schMsg:         newState(&reg, ""),
 		collector:      metrics.NewCollector(),
@@ -311,6 +334,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		mrGen:     newState(&reg, 0),
 		mrMsg:     newState(&reg, ""),
 		mrUpd:     newState(&reg, false),
+		mrVerMode: newState(&reg, false),
+		mrVers:    newState(&reg, []modrinth.ModVersion{}),
+		mrVerIdx:  newState(&reg, 0),
 		pkConfirm: newState(&reg, ""),
 
 		helpOpen: newState(&reg, false),
@@ -457,8 +483,8 @@ func (a *app) mainHints() []hint {
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
 		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
-		{"U", "update pack"}, {"R", "rename"}, {"M", "memory"}, {"d", "delete"},
-		{"?", "help"}, {"q", "quit"},
+		{"U", "update pack"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
+		{"d", "delete"}, {"?", "help"}, {"q", "quit"},
 	}
 }
 
@@ -505,6 +531,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	if a.schActive.Get() {
 		return a.schKeyMap()
 	}
+	if a.cloneActive.Get() {
+		return a.cloneKeyMap()
+	}
 	if a.delTarget.Get() != "" {
 		return a.delKeyMap()
 	}
@@ -526,6 +555,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
 		tui.On(tui.Rune('S'), func(ke tui.KeyEvent) { a.schOpen() }),
 		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.pkUpdateAsk() }),
+		tui.On(tui.Rune('C'), func(ke tui.KeyEvent) { a.cloneOpen() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),

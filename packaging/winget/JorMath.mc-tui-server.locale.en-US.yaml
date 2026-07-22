@@ -1,0 +1,21 @@
+PackageIdentifier: JorMath.mc-tui-server
+PackageVersion: 0.3.1
+PackageLocale: en-US
+Publisher: JorMath
+PackageName: mc-tui-server
+License: MIT
+ShortDescription: Terminal UI to manage local Minecraft servers
+Description: >-
+  Manage local Minecraft servers from a terminal UI: create instances on
+  Vanilla, Paper, Purpur, Fabric, Forge, NeoForge or Quilt, install Modrinth
+  modpacks, mods, plugins and datapacks, schedule backups and restarts,
+  manage players and watch live consoles with metrics.
+PackageUrl: https://github.com/JorMath/mc-tui-server
+Moniker: mc-tui-server
+Tags:
+  - minecraft
+  - server
+  - tui
+  - terminal
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

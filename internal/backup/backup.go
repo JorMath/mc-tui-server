@@ -145,6 +145,26 @@ func List(instDir string) ([]string, error) {
 	return out, nil
 }
 
+// Prune borra los backups más viejos dejando solo los keep más nuevos.
+// keep <= 0 no borra nada. Devuelve cuántos eliminó.
+func Prune(instDir string, keep int) (int, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	backups, err := List(instDir)
+	if err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, name := range backups[min(keep, len(backups)):] {
+		if err := os.Remove(filepath.Join(instDir, Dir, name)); err != nil {
+			return removed, fmt.Errorf("pruning %s: %w", name, err)
+		}
+		removed++
+	}
+	return removed, nil
+}
+
 // WorldOf deduce el nombre del mundo de un backup ("world-20260720-....zip"
 // → "world"). Devuelve "" si el nombre no sigue la convención.
 func WorldOf(backupName string) string {

@@ -27,11 +27,14 @@ type Project struct {
 }
 
 // File es el archivo descargable de la versión elegida de un proyecto.
-// SHA1 solo se llena en las consultas por hash (LatestByHash).
+// SHA1, VersionNumber y Changelog solo se llenan en las consultas por
+// hash (LatestByHash), para mostrar qué trae una actualización.
 type File struct {
-	URL      string `json:"url"`
-	Filename string `json:"filename"`
-	SHA1     string `json:"-"`
+	URL           string `json:"url"`
+	Filename      string `json:"filename"`
+	SHA1          string `json:"-"`
+	VersionNumber string `json:"-"`
+	Changelog     string `json:"-"`
 }
 
 // Client habla con la API de Modrinth. BaseURL vacío usa la oficial.
@@ -254,7 +257,9 @@ func (c *Client) LatestByHash(ctx context.Context, t config.ServerType, gameVers
 		"game_versions": []string{gameVersion},
 	}
 	var resp map[string]struct {
-		Files []struct {
+		VersionNumber string `json:"version_number"`
+		Changelog     string `json:"changelog"`
+		Files         []struct {
 			URL      string `json:"url"`
 			Filename string `json:"filename"`
 			Primary  bool   `json:"primary"`
@@ -279,7 +284,13 @@ func (c *Client) LatestByHash(ctx context.Context, t config.ServerType, gameVers
 				break
 			}
 		}
-		out[hash] = File{URL: chosen.URL, Filename: chosen.Filename, SHA1: chosen.Hashes.SHA1}
+		out[hash] = File{
+			URL:           chosen.URL,
+			Filename:      chosen.Filename,
+			SHA1:          chosen.Hashes.SHA1,
+			VersionNumber: version.VersionNumber,
+			Changelog:     version.Changelog,
+		}
 	}
 	return out, nil
 }
@@ -328,6 +339,71 @@ func (c *Client) LatestFileWithDeps(ctx context.Context, projectID string, t con
 		return File{}, nil, err
 	}
 	return c.latestFile(ctx, projectID, loaders, gameVersion, fmt.Sprintf("%s %s", t, gameVersion))
+}
+
+// ModVersion es una versión concreta de un mod/plugin con su archivo
+// primario y dependencias.
+type ModVersion struct {
+	Name          string
+	VersionNumber string
+	VersionType   string
+	GameVersions  []string
+	File          File
+	Deps          []Dependency
+}
+
+// ProjectVersions lista las versiones del proyecto compatibles con el
+// loader y la versión del juego, más recientes primero.
+func (c *Client) ProjectVersions(ctx context.Context, projectID string, t config.ServerType, gameVersion string) ([]ModVersion, error) {
+	loaders, _, err := loadersFor(t)
+	if err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	params.Set("loaders", jsonList(loaders))
+	params.Set("game_versions", jsonList([]string{gameVersion}))
+
+	var versions []struct {
+		Name          string   `json:"name"`
+		VersionNumber string   `json:"version_number"`
+		VersionType   string   `json:"version_type"`
+		GameVersions  []string `json:"game_versions"`
+		Files         []struct {
+			URL      string `json:"url"`
+			Filename string `json:"filename"`
+			Primary  bool   `json:"primary"`
+		} `json:"files"`
+		Dependencies []Dependency `json:"dependencies"`
+	}
+	endpoint := fmt.Sprintf("%s/v2/project/%s/version?%s", c.base(), projectID, params.Encode())
+	if err := download.GetJSON(ctx, c.HTTP, endpoint, &versions); err != nil {
+		return nil, err
+	}
+	var out []ModVersion
+	for _, v := range versions {
+		if len(v.Files) == 0 {
+			continue
+		}
+		chosen := v.Files[0]
+		for _, f := range v.Files {
+			if f.Primary {
+				chosen = f
+				break
+			}
+		}
+		out = append(out, ModVersion{
+			Name:          v.Name,
+			VersionNumber: v.VersionNumber,
+			VersionType:   v.VersionType,
+			GameVersions:  v.GameVersions,
+			File:          File{URL: chosen.URL, Filename: chosen.Filename},
+			Deps:          v.Dependencies,
+		})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no versions of %s are compatible with %s %s", projectID, t, gameVersion)
+	}
+	return out, nil
 }
 
 // LatestDatapackFile devuelve el zip de datapack más reciente del proyecto

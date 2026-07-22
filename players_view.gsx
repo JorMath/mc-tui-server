@@ -7,27 +7,20 @@ import (
 )
 
 // PlayersView es el panel de jugadores (v0.3.0): whitelist, ops y bans.
-templ PlayersView(a *app) {
+// tabRefs permite cambiar de pestaña con el ratón.
+templ PlayersView(a *app, tabRefs *tui.RefMap[string]) {
 	<div class="flex-col border-rounded border-cyan p-1 flex-grow">
 		<span class="font-bold text-cyan shrink-0">{fmt.Sprintf("Players — %s · %s", a.currentName(), plTabsInfo[a.plTab.Get()].Title)}</span>
 		<div class="flex gap-1 shrink-0">
-			<span class="text-cyan font-bold">1</span>
-			if a.plTab.Get() == 0 {
-				<span class="text-cyan">Whitelist</span>
-			} else {
-				<span class="font-dim">Whitelist</span>
-			}
-			<span class="text-cyan font-bold">2</span>
-			if a.plTab.Get() == 1 {
-				<span class="text-cyan">Ops</span>
-			} else {
-				<span class="font-dim">Ops</span>
-			}
-			<span class="text-cyan font-bold">3</span>
-			if a.plTab.Get() == 2 {
-				<span class="text-cyan">Banned</span>
-			} else {
-				<span class="font-dim">Banned</span>
+			for i, tab := range plTabsInfo {
+				<div class="flex gap-1" ref={tabRefs} key={tab.Title}>
+					<span class="text-cyan font-bold">{fmt.Sprintf("%d", i+1)}</span>
+					if a.plTab.Get() == i {
+						<span class="text-cyan">{tab.Title}</span>
+					} else {
+						<span class="font-dim">{tab.Title}</span>
+					}
+				</div>
 			}
 		</div>
 		if len(a.plItems()) == 0 {

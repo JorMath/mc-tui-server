@@ -132,18 +132,68 @@ func (a *app) refreshSchedules() {
 				a.liveBackup(mgr, inst)
 			}
 		}
-		if inst.RestartTime != "" && now.Format("15:04") == inst.RestartTime {
-			day := now.Format("2006-01-02")
-			if a.lastRestartDay[name] != day {
-				a.lastRestartDay[name] = day
-				a.appendLog(name, "[mc-tui] Scheduled daily restart...")
-				go func(m *server.Manager) {
-					if err := m.Restart(stopTimeout); err != nil {
-						a.appendLog(name, "[mc-tui] Scheduled restart failed: "+err.Error())
-					}
-				}(mgr)
-			}
+		if inst.RestartTime != "" {
+			a.tickRestart(mgr, inst, now)
 		}
+	}
+}
+
+// minutesBefore devuelve la hora "HH:MM" m minutos antes de t ("HH:MM").
+func minutesBefore(t string, m int) string {
+	parsed, err := time.Parse("15:04", t)
+	if err != nil {
+		return ""
+	}
+	return parsed.Add(-time.Duration(m) * time.Minute).Format("15:04")
+}
+
+// tickRestart avisa por el chat a T-5 y T-1 y reinicia a la hora
+// programada, una vez por día cada cosa.
+func (a *app) tickRestart(mgr *server.Manager, inst config.Instance, now time.Time) {
+	name := inst.Name
+	day := now.Format("2006-01-02")
+	clock := now.Format("15:04")
+	warn := func(tag, msg string) {
+		key := name + "|" + tag
+		if a.lastRestartDay[key] == day {
+			return
+		}
+		a.lastRestartDay[key] = day
+		_ = mgr.Send("say " + msg)
+		a.appendLog(name, "[mc-tui] "+msg)
+	}
+	switch clock {
+	case minutesBefore(inst.RestartTime, 5):
+		warn("w5", "Server restarting in 5 minutes")
+	case minutesBefore(inst.RestartTime, 1):
+		warn("w1", "Server restarting in 1 minute")
+	case inst.RestartTime:
+		if a.lastRestartDay[name] == day {
+			return
+		}
+		a.lastRestartDay[name] = day
+		a.appendLog(name, "[mc-tui] Scheduled daily restart...")
+		go func(m *server.Manager) {
+			if err := m.Restart(stopTimeout); err != nil {
+				a.appendLog(name, "[mc-tui] Scheduled restart failed: "+err.Error())
+			}
+		}(mgr)
+	}
+}
+
+// pruneBackups aplica la retención configurada tras crear un backup.
+func (a *app) pruneBackups(inst config.Instance) {
+	st, ok := a.store.Get(inst.Name)
+	if !ok || st.BackupKeep <= 0 {
+		return
+	}
+	n, err := backup.Prune(inst.Dir, st.BackupKeep)
+	if err != nil {
+		a.appendLog(inst.Name, "[mc-tui] Backup prune failed: "+err.Error())
+		return
+	}
+	if n > 0 {
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Pruned %d old backups (keeping %d)", n, st.BackupKeep))
 	}
 }
 
@@ -174,6 +224,7 @@ func (a *app) liveBackup(mgr *server.Manager, inst config.Instance) {
 			msg += fmt.Sprintf(" (%d locked files skipped)", skipped)
 		}
 		a.appendLog(inst.Name, msg)
+		a.pruneBackups(inst)
 	}()
 }
 

@@ -14,6 +14,7 @@ type PlayersViewView struct {
 	watchers  []tui.Watcher
 	bindApp   func(*tui.App)
 	unbindApp func()
+	TabRefs   map[string]*tui.Element
 }
 
 func (v *PlayersViewView) UnbindApp() {
@@ -43,6 +44,7 @@ func (v *PlayersViewView) UpdateProps(fresh tui.Component) {
 	v.watchers = f.watchers
 	v.bindApp = f.bindApp
 	v.unbindApp = f.unbindApp
+	v.TabRefs = f.TabRefs
 }
 
 var _ tui.AppBinder = (*PlayersViewView)(nil)
@@ -51,7 +53,7 @@ var _ tui.AppUnbinder = (*PlayersViewView)(nil)
 
 var _ tui.PropsUpdater = (*PlayersViewView)(nil)
 
-func PlayersView(a *app) *PlayersViewView {
+func PlayersView(a *app, tabRefs *tui.RefMap[string]) *PlayersViewView {
 	var view PlayersViewView
 	var watchers []tui.Watcher
 
@@ -73,69 +75,42 @@ func PlayersView(a *app) *PlayersViewView {
 		tui.WithGap(1),
 		tui.WithFlexShrink(0),
 	)
-	__tui_3 := tui.New(
-		tui.WithText("1"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_3)
-	if a.plTab.Get() == 0 {
+	for i, tab := range plTabsInfo {
+		_ = i
+		__tui_3 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
+		tabRefs.Put(tab.Title, __tui_3)
 		__tui_4 := tui.New(
-			tui.WithText("Whitelist"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+			tui.WithText(fmt.Sprintf("%d", i+1)),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_2.AddChild(__tui_4)
-	} else {
-		__tui_5 := tui.New(
-			tui.WithText("Whitelist"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_5)
-	}
-	__tui_6 := tui.New(
-		tui.WithText("2"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_6)
-	if a.plTab.Get() == 1 {
-		__tui_7 := tui.New(
-			tui.WithText("Ops"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_7)
-	} else {
-		__tui_8 := tui.New(
-			tui.WithText("Ops"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_8)
-	}
-	__tui_9 := tui.New(
-		tui.WithText("3"),
-		tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
-	)
-	__tui_2.AddChild(__tui_9)
-	if a.plTab.Get() == 2 {
-		__tui_10 := tui.New(
-			tui.WithText("Banned"),
-			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
-		)
-		__tui_2.AddChild(__tui_10)
-	} else {
-		__tui_11 := tui.New(
-			tui.WithText("Banned"),
-			tui.WithTextStyle(tui.NewStyle().Dim()),
-		)
-		__tui_2.AddChild(__tui_11)
+		__tui_3.AddChild(__tui_4)
+		if a.plTab.Get() == i {
+			__tui_5 := tui.New(
+				tui.WithText(tab.Title),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
+			)
+			__tui_3.AddChild(__tui_5)
+		} else {
+			__tui_6 := tui.New(
+				tui.WithText(tab.Title),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_3.AddChild(__tui_6)
+		}
+		__tui_2.AddChild(__tui_3)
 	}
 	__tui_0.AddChild(__tui_2)
 	if len(a.plItems()) == 0 {
-		__tui_12 := tui.New(
+		__tui_7 := tui.New(
 			tui.WithText("(empty)"),
 			tui.WithTextStyle(tui.NewStyle().Dim()),
 		)
-		__tui_0.AddChild(__tui_12)
+		__tui_0.AddChild(__tui_7)
 	}
-	__tui_13 := tui.New(
+	__tui_8 := tui.New(
 		tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Column),
 		tui.WithFlexGrow(1),
 		tui.WithScrollable(tui.ScrollVertical),
@@ -144,60 +119,60 @@ func PlayersView(a *app) *PlayersViewView {
 	for __idx_0, item := range a.plItems() {
 		_ = __idx_0
 		if item.Sel {
-			__tui_14 := tui.New(
+			__tui_9 := tui.New(
 				tui.WithText(fmt.Sprintf("> %s", item.Text)),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_13.AddChild(__tui_14)
+			__tui_8.AddChild(__tui_9)
 		} else {
-			__tui_15 := tui.New(
+			__tui_10 := tui.New(
 				tui.WithText(fmt.Sprintf("  %s", item.Text)),
 			)
-			__tui_13.AddChild(__tui_15)
+			__tui_8.AddChild(__tui_10)
 		}
 	}
-	__tui_0.AddChild(__tui_13)
+	__tui_0.AddChild(__tui_8)
 	if a.plAdding.Get() {
-		__tui_16 := tui.New(
+		__tui_11 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_17 := tui.New(
+		__tui_12 := tui.New(
 			tui.WithText("Player name:"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_16.AddChild(__tui_17)
-		__tui_18 := tui.New(
+		__tui_11.AddChild(__tui_12)
+		__tui_13 := tui.New(
 			tui.WithText(a.plText.Get()),
 		)
-		__tui_16.AddChild(__tui_18)
-		__tui_19 := tui.New(
+		__tui_11.AddChild(__tui_13)
+		__tui_14 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_16.AddChild(__tui_19)
-		__tui_0.AddChild(__tui_16)
+		__tui_11.AddChild(__tui_14)
+		__tui_0.AddChild(__tui_11)
 	}
 	if a.plMsg.Get() != "" {
-		__tui_20 := tui.New(
+		__tui_15 := tui.New(
 			tui.WithText(a.plMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_20)
+		__tui_0.AddChild(__tui_15)
 	}
-	__tui_21 := HintsRow(a.plHints(), false)
-	__tui_0.AddChild(__tui_21.Root)
+	__tui_16 := HintsRow(a.plHints(), false)
+	__tui_0.AddChild(__tui_16.Root)
 
-	watchers = append(watchers, __tui_21.GetWatchers()...)
+	watchers = append(watchers, __tui_16.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_21).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_16).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_21).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_16).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}
@@ -207,6 +182,7 @@ func PlayersView(a *app) *PlayersViewView {
 		watchers:  watchers,
 		bindApp:   __bindApp,
 		unbindApp: __unbindApp,
+		TabRefs:   tabRefs.All(),
 	}
 	return &view
 }

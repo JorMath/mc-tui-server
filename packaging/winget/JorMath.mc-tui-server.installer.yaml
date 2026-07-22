@@ -1,0 +1,11 @@
+PackageIdentifier: JorMath.mc-tui-server
+PackageVersion: 0.3.1
+InstallerType: portable
+Commands:
+  - mc-tui-server
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/JorMath/mc-tui-server/releases/download/v0.3.1/mc-tui-server_windows_amd64.exe
+    InstallerSha256: 48FD2BE070E8A8554CE74E636EBF4A13D8F71DB0AF33642E5677286698820BC0
+ManifestType: installer
+ManifestVersion: 1.6.0

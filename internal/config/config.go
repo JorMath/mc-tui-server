@@ -41,6 +41,8 @@ type Instance struct {
 	AutoRestart bool `json:"auto_restart,omitempty"`
 	// BackupHours respalda el mundo cada N horas mientras corre (0 = off).
 	BackupHours int `json:"backup_hours,omitempty"`
+	// BackupKeep conserva solo los N backups más nuevos (0 = todos).
+	BackupKeep int `json:"backup_keep,omitempty"`
 	// RestartTime reinicia a diario a esta hora "HH:MM" si corre ("" = off).
 	RestartTime string `json:"restart_time,omitempty"`
 	// PackID/PackVerID identifican el modpack de Modrinth del que se creó

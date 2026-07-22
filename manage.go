@@ -213,6 +213,11 @@ func (a *app) schOpen() {
 	} else {
 		a.schBackup.Set("")
 	}
+	if inst.BackupKeep > 0 {
+		a.schKeep.Set(strconv.Itoa(inst.BackupKeep))
+	} else {
+		a.schKeep.Set("")
+	}
 	a.schRestart.Set(inst.RestartTime)
 	a.schStep.Set(0)
 	a.schMsg.Set("")
@@ -241,6 +246,16 @@ func (a *app) schCommit() {
 		}
 		hours = h
 	}
+	keep := 0
+	if s := a.schKeep.Get(); s != "" {
+		k, err := strconv.Atoi(s)
+		if err != nil || k <= 0 {
+			a.schStep.Set(1)
+			a.schMsg.Set("Backups to keep must be a positive number (empty = all)")
+			return
+		}
+		keep = k
+	}
 	restart := a.schRestart.Get()
 	if restart != "" {
 		if _, err := time.Parse("15:04", restart); err != nil {
@@ -254,6 +269,7 @@ func (a *app) schCommit() {
 		return
 	}
 	inst.BackupHours = hours
+	inst.BackupKeep = keep
 	inst.RestartTime = restart
 	if err := a.store.Update(inst); err != nil {
 		a.schMsg.Set("Error: " + err.Error())
@@ -280,7 +296,10 @@ func (a *app) schCommit() {
 func (a *app) schKeyMap() tui.KeyMap {
 	editing := a.schBackup
 	valid := func(r rune) bool { return r >= '0' && r <= '9' }
-	if a.schStep.Get() == 1 {
+	switch a.schStep.Get() {
+	case 1:
+		editing = a.schKeep
+	case 2:
 		editing = a.schRestart
 		valid = func(r rune) bool { return (r >= '0' && r <= '9') || r == ':' }
 	}
@@ -299,9 +318,9 @@ func (a *app) schKeyMap() tui.KeyMap {
 			})
 		}),
 		tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
-			if a.schStep.Get() == 0 {
+			if step := a.schStep.Get(); step < 2 {
 				a.schMsg.Set("")
-				a.schStep.Set(1)
+				a.schStep.Set(step + 1)
 				return
 			}
 			a.schCommit()

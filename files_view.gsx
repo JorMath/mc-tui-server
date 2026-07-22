@@ -6,40 +6,21 @@ import (
 	tui "github.com/grindlemire/go-tui"
 )
 
-// FilesView es el panel de archivos (R3): properties, mundos y plugins.
-templ FilesView(a *app) {
+// FilesView es el panel de archivos (R3): properties, mundos, plugins,
+// backups y logs. tabRefs permite cambiar de pestaña con el ratón.
+templ FilesView(a *app, tabRefs *tui.RefMap[string]) {
 	<div class="flex-col border-rounded border-cyan p-1 flex-grow">
 		<span class="font-bold text-cyan shrink-0">{a.fmTitle()}</span>
 		<div class="flex gap-1 shrink-0">
-			<span class="text-cyan font-bold">1</span>
-			if a.fmTab.Get() == 0 {
-				<span class="text-cyan">Properties</span>
-			} else {
-				<span class="font-dim">Properties</span>
-			}
-			<span class="text-cyan font-bold">2</span>
-			if a.fmTab.Get() == 1 {
-				<span class="text-cyan">Worlds</span>
-			} else {
-				<span class="font-dim">Worlds</span>
-			}
-			<span class="text-cyan font-bold">3</span>
-			if a.fmTab.Get() == 2 {
-				<span class="text-cyan">Plugins/Mods</span>
-			} else {
-				<span class="font-dim">Plugins/Mods</span>
-			}
-			<span class="text-cyan font-bold">4</span>
-			if a.fmTab.Get() == 3 {
-				<span class="text-cyan">Backups</span>
-			} else {
-				<span class="font-dim">Backups</span>
-			}
-			<span class="text-cyan font-bold">5</span>
-			if a.fmTab.Get() == 4 {
-				<span class="text-cyan">Logs</span>
-			} else {
-				<span class="font-dim">Logs</span>
+			for i, name := range fmTabNames {
+				<div class="flex gap-1" ref={tabRefs} key={name}>
+					<span class="text-cyan font-bold">{fmt.Sprintf("%d", i+1)}</span>
+					if a.fmTab.Get() == i {
+						<span class="text-cyan">{name}</span>
+					} else {
+						<span class="font-dim">{name}</span>
+					}
+				</div>
 			}
 		</div>
 		if len(a.fmItems()) == 0 {

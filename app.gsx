@@ -30,8 +30,8 @@ templ HintsRow(hints []hint, green bool) {
 }
 
 // Sidebar lista las instancias con su estado y métricas. El ancho mínimo
-// se adapta al tamaño de la terminal.
-templ Sidebar(a *app) {
+// se adapta al tamaño de la terminal; rowRefs permite el click del ratón.
+templ Sidebar(a *app, rowRefs *tui.RefMap[string]) {
 	<div class="flex-col border-rounded p-1 shrink-0" minWidth={a.sidebarMinWidth()}>
 		<span class="font-bold shrink-0">Instances</span>
 		if len(a.managers.Get()) == 0 {
@@ -39,7 +39,7 @@ templ Sidebar(a *app) {
 			<span class="font-dim">Press n to create one</span>
 		}
 		for i, mgr := range a.managers.Get() {
-			<div class="flex-col">
+			<div class="flex-col" ref={rowRefs} key={mgr.Instance().Name}>
 				<div class="flex justify-between">
 					if i == a.selected.Get() {
 						<span class="font-bold text-cyan">{fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
@@ -128,11 +128,28 @@ templ FooterBar(a *app) {
 			<span class="text-cyan font-bold">Esc</span>
 			<span class="font-dim">cancels</span>
 		</div>
+	} else if a.cloneActive.Get() {
+		<div class="flex gap-1 shrink-0 px-1">
+			<span class="text-cyan font-bold">{fmt.Sprintf("Clone %s as:", a.currentName())}</span>
+			<span>{a.cloneText.Get()}</span>
+			<span class="text-cyan blink">_</span>
+			if a.cloneMsg.Get() != "" {
+				<span class="text-red">{a.cloneMsg.Get()}</span>
+			}
+			<span class="text-cyan font-bold">Enter</span>
+			<span class="font-dim">clones</span>
+			<span class="font-dim">|</span>
+			<span class="text-cyan font-bold">Esc</span>
+			<span class="font-dim">cancels</span>
+		</div>
 	} else if a.schActive.Get() {
 		<div class="flex gap-1 shrink-0 px-1">
 			if a.schStep.Get() == 0 {
 				<span class="text-cyan font-bold">{fmt.Sprintf("Backup every N hours for %s (empty = off):", a.currentName())}</span>
 				<span>{a.schBackup.Get()}</span>
+			} else if a.schStep.Get() == 1 {
+				<span class="text-cyan font-bold">Backups to keep (empty = all):</span>
+				<span>{a.schKeep.Get()}</span>
 			} else {
 				<span class="text-cyan font-bold">Daily restart at HH:MM (empty = off):</span>
 				<span>{a.schRestart.Get()}</span>
@@ -142,7 +159,7 @@ templ FooterBar(a *app) {
 				<span class="text-red">{a.schMsg.Get()}</span>
 			}
 			<span class="text-cyan font-bold">Enter</span>
-			if a.schStep.Get() == 0 {
+			if a.schStep.Get() < 2 {
 				<span class="font-dim">next</span>
 			} else {
 				<span class="font-dim">saves</span>
@@ -184,15 +201,15 @@ templ (a *app) Render() {
 				<span class="font-dim">{fmt.Sprintf("%d instances", len(a.managers.Get()))}</span>
 			</div>
 			<div class="flex gap-1 flex-grow">
-				@Sidebar(a)
+				@Sidebar(a, a.rowRefs)
 				if a.wizStep.Get() != wizOff {
 					@WizardView(a)
 				} else if a.fmOpen.Get() {
-					@FilesView(a)
+					@FilesView(a, a.fmTabRefs)
 				} else if a.mrOpen.Get() {
 					@ModrinthView(a)
 				} else if a.plOpen.Get() {
-					@PlayersView(a)
+					@PlayersView(a, a.plTabRefs)
 				} else if a.helpOpen.Get() {
 					@HelpView(a)
 				} else {
