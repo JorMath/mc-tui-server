@@ -212,6 +212,8 @@ templ (a *app) Render() {
 					@PlayersView(a, a.plTabRefs)
 				} else if a.helpOpen.Get() {
 					@HelpView(a)
+				} else if a.suOpen.Get() {
+					@ServerUpdateView(a)
 				} else {
 					@ConsoleView(a)
 				}
