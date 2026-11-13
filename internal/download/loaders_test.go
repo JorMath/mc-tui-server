@@ -69,10 +69,10 @@ func TestCompareVersions(t *testing.T) {
 		{"1.20", "1.20.1", -1},
 	}
 	for _, c := range cases {
-		got := compareVersions(c.a, c.b)
+		got := CompareVersions(c.a, c.b)
 		switch {
 		case c.sign > 0 && got <= 0, c.sign < 0 && got >= 0, c.sign == 0 && got != 0:
-			t.Fatalf("compareVersions(%q, %q) = %d, quiero signo %d", c.a, c.b, got, c.sign)
+			t.Fatalf("CompareVersions(%q, %q) = %d, quiero signo %d", c.a, c.b, got, c.sign)
 		}
 	}
 }

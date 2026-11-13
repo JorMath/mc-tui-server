@@ -26,7 +26,7 @@ var helpSections = []helpSection{
 	{"Instance management", []hint{
 		{"b", "back up the active world"},
 		{"S", "schedule automatic backups (with retention) and daily restart"},
-		{"U", "update a modpack instance to the pack's latest version"},
+		{"U", "update the instance: modpack version, or swap the jar for vanilla/paper/purpur/fabric"},
 		{"C", "clone the instance as a sandbox copy"},
 		{"R / M / d", "rename / memory / delete"},
 	}},

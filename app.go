@@ -5,11 +5,13 @@
 package main
 
 import (
+	"context"
 	"math"
 	"path/filepath"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/download"
 	"github.com/JorMath/mc-tui-server/internal/mcping"
 	"github.com/JorMath/mc-tui-server/internal/metrics"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
@@ -223,6 +225,25 @@ type app struct {
 	pkConfirm *tui.State[string]
 	pkPending modrinth.PackVersion
 
+	// Actualización del software del servidor (F1) para instancias
+	// jar-based: lista de versiones del provider, selección y progreso.
+	// suGen invalida goroutines de un panel ya cerrado, igual que mrGen.
+	suOpen     *tui.State[bool]
+	suVersions *tui.State[[]string]
+	suIdx      *tui.State[int]
+	suBusy     *tui.State[bool]
+	suMsg      *tui.State[string]
+	suConfirm  *tui.State[string]
+	suRestart  *tui.State[bool]
+	suGen      *tui.State[int]
+	suTarget   string
+	suType     config.ServerType
+	suCurrent  string
+	suCancel   context.CancelFunc
+	// newProvider resuelve el provider de descargas; los tests lo sustituyen
+	// por uno falso para no tocar la red.
+	newProvider func(config.ServerType) (download.Provider, error)
+
 	// Overlay de ayuda (v0.3.1).
 	helpOpen *tui.State[bool]
 
@@ -323,21 +344,31 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmLogLines:  newState(&reg, []string{}),
 		fmLogScroll: newState(&reg, 0),
 
-		mr:        &modrinth.Client{},
-		mrKind:    newState(&reg, ""),
-		mrOpen:    newState(&reg, false),
-		mrTyping:  newState(&reg, false),
-		mrQuery:   newState(&reg, ""),
-		mrResults: newState(&reg, []modrinth.Project{}),
-		mrIdx:     newState(&reg, 0),
-		mrBusy:    newState(&reg, false),
-		mrGen:     newState(&reg, 0),
-		mrMsg:     newState(&reg, ""),
-		mrUpd:     newState(&reg, false),
-		mrVerMode: newState(&reg, false),
-		mrVers:    newState(&reg, []modrinth.ModVersion{}),
-		mrVerIdx:  newState(&reg, 0),
-		pkConfirm: newState(&reg, ""),
+		mr:          &modrinth.Client{},
+		mrKind:      newState(&reg, ""),
+		mrOpen:      newState(&reg, false),
+		mrTyping:    newState(&reg, false),
+		mrQuery:     newState(&reg, ""),
+		mrResults:   newState(&reg, []modrinth.Project{}),
+		mrIdx:       newState(&reg, 0),
+		mrBusy:      newState(&reg, false),
+		mrGen:       newState(&reg, 0),
+		mrMsg:       newState(&reg, ""),
+		mrUpd:       newState(&reg, false),
+		mrVerMode:   newState(&reg, false),
+		mrVers:      newState(&reg, []modrinth.ModVersion{}),
+		mrVerIdx:    newState(&reg, 0),
+		pkConfirm:   newState(&reg, ""),
+		newProvider: func(t config.ServerType) (download.Provider, error) { return download.For(t, nil) },
+
+		suOpen:     newState(&reg, false),
+		suVersions: newState(&reg, []string{}),
+		suIdx:      newState(&reg, 0),
+		suBusy:     newState(&reg, false),
+		suMsg:      newState(&reg, ""),
+		suConfirm:  newState(&reg, ""),
+		suRestart:  newState(&reg, false),
+		suGen:      newState(&reg, 0),
 
 		helpOpen: newState(&reg, false),
 		plOpen:   newState(&reg, false),
@@ -483,7 +514,7 @@ func (a *app) mainHints() []hint {
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
 		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
-		{"U", "update pack"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
+		{"U", "update"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
 		{"d", "delete"}, {"?", "help"}, {"q", "quit"},
 	}
 }
@@ -501,6 +532,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	}
 	if a.helpOpen.Get() {
 		return a.helpKeyMap()
+	}
+	if a.suOpen.Get() {
+		return a.suKeyMap()
 	}
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
@@ -554,7 +588,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('a'), func(ke tui.KeyEvent) { a.toggleAutoRestart() }),
 		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
 		tui.On(tui.Rune('S'), func(ke tui.KeyEvent) { a.schOpen() }),
-		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.pkUpdateAsk() }),
+		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.updateAsk() }),
 		tui.On(tui.Rune('C'), func(ke tui.KeyEvent) { a.cloneOpen() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),

@@ -62,9 +62,9 @@ func QuiltInstallerURL(ctx context.Context, client *http.Client, baseURL string)
 	return installers[0].URL, nil
 }
 
-// compareVersions compara versiones por segmentos numéricos ("1.21.11" <
+// CompareVersions compara versiones por segmentos numéricos ("1.21.11" <
 // "26.2"). Segmentos no numéricos comparan como texto.
-func compareVersions(a, b string) int {
+func CompareVersions(a, b string) int {
 	as, bs := strings.Split(a, "."), strings.Split(b, ".")
 	for i := 0; i < len(as) || i < len(bs); i++ {
 		var av, bv string
@@ -128,7 +128,7 @@ func (f *Forge) Versions(ctx context.Context) ([]string, error) {
 		seen[mc] = true
 		out = append(out, mc)
 	}
-	sort.Slice(out, func(i, j int) bool { return compareVersions(out[i], out[j]) > 0 })
+	sort.Slice(out, func(i, j int) bool { return CompareVersions(out[i], out[j]) > 0 })
 	return out, nil
 }
 

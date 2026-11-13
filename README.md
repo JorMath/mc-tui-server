@@ -147,7 +147,7 @@ mc-tui-server -version   # print the version and exit
 | `b` | back up the active world into `backups/` (server must be stopped) |
 | `p` | players: whitelist / ops / bans (live commands while running) |
 | `S` | schedule automatic backups (every N hours) and a daily restart |
-| `U` | update a modpack instance to the pack's latest version (backs up the world first) |
+| `U` | update the server software: modpack version for pack instances, jar swap for vanilla/paper/purpur/fabric (backs up the world first; server must be stopped) |
 | `C` | clone the instance into a sandbox copy (server must be stopped) |
 | `R` | rename the selected instance (server must be stopped) |
 | `d` | delete the selected instance and all its files, after confirmation |

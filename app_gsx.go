@@ -888,13 +888,18 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return HelpView(a)
 			})
 			__tui_6.AddChild(__tui_12)
+		} else if a.suOpen.Get() {
+			__tui_13 := app.Mount(a, 6, func() tui.Component {
+				return ServerUpdateView(a)
+			})
+			__tui_6.AddChild(__tui_13)
 		} else {
-			__tui_13 := ConsoleView(a)
-			__tui_6.AddChild(__tui_13.Root)
+			__tui_14 := ConsoleView(a)
+			__tui_6.AddChild(__tui_14.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_14 := FooterBar(a)
-		__tui_2.AddChild(__tui_14.Root)
+		__tui_15 := FooterBar(a)
+		__tui_2.AddChild(__tui_15.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}
