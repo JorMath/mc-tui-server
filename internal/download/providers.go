@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
+	"strings"
 )
 
 const (
 	defaultVanillaBase = "https://piston-meta.mojang.com"
-	defaultPaperBase   = "https://api.papermc.io"
+	defaultPaperBase   = "https://fill.papermc.io"
 	defaultPurpurBase  = "https://api.purpurmc.org"
 	defaultFabricBase  = "https://meta.fabricmc.net"
 )
@@ -88,7 +90,7 @@ func (v *Vanilla) ResolveJarURL(ctx context.Context, version string) (string, er
 	return "", fmt.Errorf("version %q not found in the Mojang manifest", version)
 }
 
-// --- Paper (PaperMC v2) ----------------------------------------------------
+// --- Paper (PaperMC fill v3) ---------------------------------------------
 
 type Paper struct {
 	BaseURL string
@@ -97,54 +99,104 @@ type Paper struct {
 
 func (p *Paper) Name() string { return "paper" }
 
-// Versions devuelve las versiones soportadas, más nuevas primero
-// (la API las lista de vieja a nueva).
+type paperDownload struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+}
+
+type paperBuild struct {
+	ID        int                      `json:"id"`
+	Channel   string                   `json:"channel"`
+	Downloads map[string]paperDownload `json:"downloads"`
+}
+
+// showPaperVersion descarta los canales de prueba (rc/pre) para no ofrecer
+// builds inestables en el asistente.
+func showPaperVersion(version string) bool {
+	return version != "" && !strings.Contains(version, "-")
+}
+
+// Versions devuelve las versiones estables soportadas, más nuevas primero
+// (la API v3 ya las lista de nueva a vieja).
 func (p *Paper) Versions(ctx context.Context) ([]string, error) {
 	var project struct {
-		Versions []string `json:"versions"`
+		Versions []struct {
+			Version struct {
+				ID string `json:"id"`
+			} `json:"version"`
+		} `json:"versions"`
 	}
-	url := base(p.BaseURL, defaultPaperBase) + "/v2/projects/paper"
+	url := base(p.BaseURL, defaultPaperBase) + "/v3/projects/paper/versions"
 	if err := GetJSON(ctx, p.Client, url, &project); err != nil {
 		return nil, err
 	}
-	out := make([]string, len(project.Versions))
-	for i, v := range project.Versions {
-		out[len(out)-1-i] = v
+	out := make([]string, 0, len(project.Versions))
+	for _, v := range project.Versions {
+		if showPaperVersion(v.Version.ID) {
+			out = append(out, v.Version.ID)
+		}
 	}
 	return out, nil
 }
 
-func (p *Paper) ResolveJarURL(ctx context.Context, version string) (string, error) {
-	var builds struct {
-		Builds []struct {
-			Build     int    `json:"build"`
-			Channel   string `json:"channel"`
-			Downloads struct {
-				Application struct {
-					Name string `json:"name"`
-				} `json:"application"`
-			} `json:"downloads"`
-		} `json:"builds"`
-	}
-	baseURL := base(p.BaseURL, defaultPaperBase)
-	url := fmt.Sprintf("%s/v2/projects/paper/versions/%s/builds", baseURL, version)
+// paperBuilds consulta la lista de builds de una versión. La API responde
+// de build más nuevo a más viejo.
+func (p *Paper) paperBuilds(ctx context.Context, url string) ([]paperBuild, error) {
+	var builds []paperBuild
 	if err := GetJSON(ctx, p.Client, url, &builds); err != nil {
+		return nil, err
+	}
+	return builds, nil
+}
+
+// ResolveJarURL devuelve la URL directa del jar de servidor del build estable
+// más reciente. Si la versión no tiene ningún build estable (por ejemplo una
+// rc), cae al build más nuevo disponible, sin importar el canal.
+func (p *Paper) ResolveJarURL(ctx context.Context, version string) (string, error) {
+	baseURL := base(p.BaseURL, defaultPaperBase)
+	buildsURL := fmt.Sprintf("%s/v3/projects/paper/versions/%s/builds", baseURL, version)
+
+	stableBuilds, err := p.paperBuilds(ctx, buildsURL+"?channel=STABLE")
+	if err != nil {
 		return "", err
 	}
-	if len(builds.Builds) == 0 {
-		return "", fmt.Errorf("Paper version %s has no builds", version)
-	}
-	// Preferir el build estable (canal "default") más reciente; si no hay,
-	// usar el último build disponible.
-	chosen := builds.Builds[len(builds.Builds)-1]
-	for i := len(builds.Builds) - 1; i >= 0; i-- {
-		if builds.Builds[i].Channel == "default" {
-			chosen = builds.Builds[i]
-			break
+	candidates := make([]paperBuild, 0, len(stableBuilds))
+	for _, b := range stableBuilds {
+		if b.Channel == "STABLE" {
+			candidates = append(candidates, b)
 		}
 	}
-	return fmt.Sprintf("%s/v2/projects/paper/versions/%s/builds/%d/downloads/%s",
-		baseURL, version, chosen.Build, chosen.Downloads.Application.Name), nil
+	if len(candidates) == 0 {
+		// Solo hay builds beta/alpha: se usa el más nuevo disponible.
+		candidates, err = p.paperBuilds(ctx, buildsURL)
+		if err != nil {
+			return "", err
+		}
+	}
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("Paper version %s has no builds", version)
+	}
+	chosen := candidates[0]
+	for _, b := range candidates[1:] {
+		if b.ID > chosen.ID {
+			chosen = b
+		}
+	}
+	if dl, ok := chosen.Downloads["server:default"]; ok && dl.URL != "" {
+		return dl.URL, nil
+	}
+	// Defensivo: cualquier otra clave "server:*" sirve como jar del servidor.
+	keys := make([]string, 0, len(chosen.Downloads))
+	for key := range chosen.Downloads {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if strings.HasPrefix(key, "server:") && chosen.Downloads[key].URL != "" {
+			return chosen.Downloads[key].URL, nil
+		}
+	}
+	return "", fmt.Errorf("Paper build %d has no server download", chosen.ID)
 }
 
 // --- Purpur (PurpurMC v2) ----------------------------------------------------

@@ -109,23 +109,43 @@ func TestVanillaResolveVersionJSONErrorPropagates(t *testing.T) {
 func paperServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v2/projects/paper", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"versions":["1.21.3","1.21.4"]}`)
-	})
-	mux.HandleFunc("/v2/projects/paper/versions/1.21.4/builds", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"builds":[
-			{"build":90,"channel":"default","downloads":{"application":{"name":"paper-1.21.4-90.jar"}}},
-			{"build":91,"channel":"default","downloads":{"application":{"name":"paper-1.21.4-91.jar"}}},
-			{"build":92,"channel":"experimental","downloads":{"application":{"name":"paper-1.21.4-92.jar"}}}
+	mux.HandleFunc("/v3/projects/paper/versions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"versions":[
+			{"version":{"id":"1.21.4"}},
+			{"version":{"id":"1.21.4-rc1"}},
+			{"version":{"id":"1.21.3"}}
 		]}`)
 	})
-	mux.HandleFunc("/v2/projects/paper/versions/1.21.3/builds", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"builds":[
-			{"build":10,"channel":"experimental","downloads":{"application":{"name":"paper-1.21.3-10.jar"}}}
-		]}`)
+	mux.HandleFunc("/v3/projects/paper/versions/1.21.4/builds", func(w http.ResponseWriter, r *http.Request) {
+		// La API devuelve de build más nuevo a más viejo. Se cuela un BETA
+		// más nuevo para comprobar que solo se elige un STABLE.
+		fmt.Fprint(w, `[
+			{"id":93,"channel":"BETA","downloads":{"server:default":{"name":"paper-1.21.4-93.jar","url":"https://cdn.example/paper-1.21.4-93.jar"}}},
+			{"id":91,"channel":"STABLE","downloads":{"server:default":{"name":"paper-1.21.4-91.jar","url":"https://cdn.example/paper-1.21.4-91.jar"}}},
+			{"id":90,"channel":"STABLE","downloads":{"server:default":{"name":"paper-1.21.4-90.jar","url":"https://cdn.example/paper-1.21.4-90.jar"}}}
+		]`)
 	})
-	mux.HandleFunc("/v2/projects/paper/versions/vacia/builds", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"builds":[]}`)
+	mux.HandleFunc("/v3/projects/paper/versions/1.21.3/builds", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("channel") == "STABLE" {
+			fmt.Fprint(w, `[]`)
+			return
+		}
+		// Sin builds estables: se usa el más nuevo de cualquier canal.
+		fmt.Fprint(w, `[
+			{"id":11,"channel":"BETA","downloads":{"server:default":{"name":"paper-1.21.3-11.jar","url":"https://cdn.example/paper-1.21.3-11.jar"}}},
+			{"id":10,"channel":"ALPHA","downloads":{"server:default":{"name":"paper-1.21.3-10.jar","url":"https://cdn.example/paper-1.21.3-10.jar"}}}
+		]`)
+	})
+	mux.HandleFunc("/v3/projects/paper/versions/vacia/builds", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[]`)
+	})
+	mux.HandleFunc("/v3/projects/paper/versions/inexistente/builds", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	})
+	mux.HandleFunc("/v3/projects/paper/versions/otracanal/builds", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[
+			{"id":7,"channel":"STABLE","downloads":{"server:mojang":{"name":"paper-otracanal-7.jar","url":"https://cdn.example/paper-otracanal-7.jar"}}}
+		]`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -139,7 +159,7 @@ func TestPaperVersions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Versions: %v", err)
 	}
-	// Se invierte para mostrar las más nuevas primero.
+	// Se conserva el orden de la API y se descartan los canales rc/pre.
 	if strings.Join(got, ",") != "1.21.4,1.21.3" {
 		t.Fatalf("Versions = %v", got)
 	}
@@ -152,27 +172,39 @@ func TestPaperVersionsErrorPropagates(t *testing.T) {
 	}
 }
 
-func TestPaperResolvePrefersLatestDefaultBuild(t *testing.T) {
+func TestPaperResolvePrefersLatestStableBuild(t *testing.T) {
 	srv := paperServer(t)
 	p := &Paper{BaseURL: srv.URL}
 	url, err := p.ResolveJarURL(ctx(), "1.21.4")
 	if err != nil {
 		t.Fatalf("ResolveJarURL: %v", err)
 	}
-	want := srv.URL + "/v2/projects/paper/versions/1.21.4/builds/91/downloads/paper-1.21.4-91.jar"
-	if url != want {
-		t.Fatalf("url = %q, quiero %q", url, want)
+	// El build 93 es más nuevo pero BETA: debe elegirse el 91 STABLE.
+	if url != "https://cdn.example/paper-1.21.4-91.jar" {
+		t.Fatalf("url = %q", url)
 	}
 }
 
-func TestPaperResolveFallsBackToLastBuild(t *testing.T) {
+func TestPaperResolveFallsBackToNewestBuild(t *testing.T) {
 	srv := paperServer(t)
 	p := &Paper{BaseURL: srv.URL}
 	url, err := p.ResolveJarURL(ctx(), "1.21.3")
 	if err != nil {
 		t.Fatalf("ResolveJarURL: %v", err)
 	}
-	if !strings.HasSuffix(url, "/builds/10/downloads/paper-1.21.3-10.jar") {
+	if url != "https://cdn.example/paper-1.21.3-11.jar" {
+		t.Fatalf("url = %q", url)
+	}
+}
+
+func TestPaperResolveAcceptsOtherServerDownloadKey(t *testing.T) {
+	srv := paperServer(t)
+	p := &Paper{BaseURL: srv.URL}
+	url, err := p.ResolveJarURL(ctx(), "otracanal")
+	if err != nil {
+		t.Fatalf("ResolveJarURL: %v", err)
+	}
+	if url != "https://cdn.example/paper-otracanal-7.jar" {
 		t.Fatalf("url = %q", url)
 	}
 }
