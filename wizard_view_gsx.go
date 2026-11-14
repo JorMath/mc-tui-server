@@ -259,98 +259,160 @@ func WizardView(a *app) *WizardViewView {
 		__tui_30.AddChild(__tui_32)
 		__tui_0.AddChild(__tui_30)
 	}
-	if a.wizStep.Get() == wizName {
+	if a.wizStep.Get() == wizJava {
 		__tui_33 := tui.New(
+			tui.WithText(fmt.Sprintf("Minecraft %s needs Java %d+ — Temurin is downloaded once and reused", a.wizMCVersion(), a.wizJavaNeed)),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_33)
+		if a.wizJavaBusy.Get() {
+			__tui_34 := tui.New(
+				tui.WithText(a.wizJavaMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
+			)
+			__tui_0.AddChild(__tui_34)
+			__tui_35 := tui.New(
+				tui.WithText("Esc cancels the download"),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_0.AddChild(__tui_35)
+		} else if a.wizJavaTyping.Get() {
+			__tui_36 := tui.New(
+				tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+				tui.WithGap(1),
+			)
+			__tui_37 := tui.New(
+				tui.WithText("Java path:"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+			)
+			__tui_36.AddChild(__tui_37)
+			__tui_38 := tui.New(
+				tui.WithText(a.wizJavaPath.Get()),
+			)
+			__tui_36.AddChild(__tui_38)
+			__tui_39 := tui.New(
+				tui.WithText("_"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+			)
+			__tui_36.AddChild(__tui_39)
+			__tui_0.AddChild(__tui_36)
+		} else {
+			for __idx_0, item := range a.wizJavaItems() {
+				_ = __idx_0
+				if item.Sel {
+					__tui_40 := tui.New(
+						tui.WithText(fmt.Sprintf("> %s", item.Text)),
+						tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
+					)
+					__tui_0.AddChild(__tui_40)
+				} else {
+					__tui_41 := tui.New(
+						tui.WithText(fmt.Sprintf("  %s", item.Text)),
+					)
+					__tui_0.AddChild(__tui_41)
+				}
+			}
+		}
+		if a.wizJavaMsg.Get() != "" && !a.wizJavaBusy.Get() {
+			__tui_42 := tui.New(
+				tui.WithText(a.wizJavaMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
+			)
+			__tui_0.AddChild(__tui_42)
+		}
+	}
+	if a.wizStep.Get() == wizName {
+		__tui_43 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_34 := tui.New(
+		__tui_44 := tui.New(
 			tui.WithText("Name:"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_33.AddChild(__tui_34)
-		__tui_35 := tui.New(
+		__tui_43.AddChild(__tui_44)
+		__tui_45 := tui.New(
 			tui.WithText(a.wizName.Get()),
 		)
-		__tui_33.AddChild(__tui_35)
-		__tui_36 := tui.New(
+		__tui_43.AddChild(__tui_45)
+		__tui_46 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_33.AddChild(__tui_36)
-		__tui_0.AddChild(__tui_33)
+		__tui_43.AddChild(__tui_46)
+		__tui_0.AddChild(__tui_43)
 		if a.wizMsg.Get() != "" {
-			__tui_37 := tui.New(
+			__tui_47 := tui.New(
 				tui.WithText(a.wizMsg.Get()),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 			)
-			__tui_0.AddChild(__tui_37)
+			__tui_0.AddChild(__tui_47)
 		}
 	}
 	if a.wizStep.Get() == wizMem {
-		__tui_38 := tui.New(
+		__tui_48 := tui.New(
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithGap(1),
 		)
-		__tui_39 := tui.New(
+		__tui_49 := tui.New(
 			tui.WithText("Memory (MB):"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
 		)
-		__tui_38.AddChild(__tui_39)
-		__tui_40 := tui.New(
+		__tui_48.AddChild(__tui_49)
+		__tui_50 := tui.New(
 			tui.WithText(a.wizMemory.Get()),
 		)
-		__tui_38.AddChild(__tui_40)
-		__tui_41 := tui.New(
+		__tui_48.AddChild(__tui_50)
+		__tui_51 := tui.New(
 			tui.WithText("_"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
 		)
-		__tui_38.AddChild(__tui_41)
-		__tui_0.AddChild(__tui_38)
+		__tui_48.AddChild(__tui_51)
+		__tui_0.AddChild(__tui_48)
 	}
 	if a.wizStep.Get() == wizEula {
-		__tui_42 := tui.New(
+		__tui_52 := tui.New(
 			tui.WithText("To run the server you must accept the Minecraft EULA:"),
 		)
-		__tui_0.AddChild(__tui_42)
-		__tui_43 := tui.New(
+		__tui_0.AddChild(__tui_52)
+		__tui_53 := tui.New(
 			tui.WithText("https://aka.ms/MinecraftEULA"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
 		)
-		__tui_0.AddChild(__tui_43)
-		__tui_44 := tui.New(
+		__tui_0.AddChild(__tui_53)
+		__tui_54 := tui.New(
 			tui.WithText("Do you accept?"),
 			tui.WithTextStyle(tui.NewStyle().Bold()),
 		)
-		__tui_0.AddChild(__tui_44)
+		__tui_0.AddChild(__tui_54)
 	}
 	if a.wizStep.Get() == wizDownload {
-		__tui_45 := tui.New(
+		__tui_55 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_45)
+		__tui_0.AddChild(__tui_55)
 	}
 	if a.wizStep.Get() == wizError {
-		__tui_46 := tui.New(
+		__tui_56 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 		)
-		__tui_0.AddChild(__tui_46)
+		__tui_0.AddChild(__tui_56)
 	}
-	__tui_47 := HintsRow(a.wizHints(), false)
-	__tui_0.AddChild(__tui_47.Root)
+	__tui_57 := HintsRow(a.wizHints(), false)
+	__tui_0.AddChild(__tui_57.Root)
 
-	watchers = append(watchers, __tui_47.GetWatchers()...)
+	watchers = append(watchers, __tui_57.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_47).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_57).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_47).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_57).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}

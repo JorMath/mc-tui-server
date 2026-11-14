@@ -28,11 +28,14 @@ const (
 // de los servidores Forge/NeoForge modernos, que no se lanzan con -jar;
 // cuando está vacío se usa JarPath.
 type Instance struct {
-	Name     string     `json:"name"`
-	Dir      string     `json:"dir"`
-	JarPath  string     `json:"jar_path"`
-	ArgsDir  string     `json:"args_dir,omitempty"`
-	JavaPath string     `json:"java_path"`
+	Name     string `json:"name"`
+	Dir      string `json:"dir"`
+	JarPath  string `json:"jar_path"`
+	ArgsDir  string `json:"args_dir,omitempty"`
+	JavaPath string `json:"java_path"`
+	// JavaMode registra cómo se resolvió el runtime: "" o "system" (PATH),
+	// "managed" (Temurin descargado por la app) o "manual" (ruta del usuario).
+	JavaMode string     `json:"java_mode,omitempty"`
 	JavaArgs []string   `json:"java_args,omitempty"`
 	MemoryMB int        `json:"memory_mb"`
 	Type     ServerType `json:"type"`

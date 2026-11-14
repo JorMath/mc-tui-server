@@ -35,7 +35,7 @@ func (a *app) checkJava(inst config.Instance) bool {
 	}
 	if major < required {
 		a.appendLog(inst.Name, fmt.Sprintf(
-			"[mc-tui] Java %d found, but Minecraft %s needs Java %d+ — install it or set java_path for this instance",
+			"[mc-tui] Java %d found, but Minecraft %s needs Java %d+ — press J to pick a Java runtime for this instance",
 			major, inst.Version, required))
 		return false
 	}

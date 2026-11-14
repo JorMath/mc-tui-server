@@ -893,13 +893,18 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return ServerUpdateView(a)
 			})
 			__tui_6.AddChild(__tui_13)
+		} else if a.javaOpen.Get() {
+			__tui_14 := app.Mount(a, 7, func() tui.Component {
+				return JavaView(a)
+			})
+			__tui_6.AddChild(__tui_14)
 		} else {
-			__tui_14 := ConsoleView(a)
-			__tui_6.AddChild(__tui_14.Root)
+			__tui_15 := ConsoleView(a)
+			__tui_6.AddChild(__tui_15.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_15 := FooterBar(a)
-		__tui_2.AddChild(__tui_15.Root)
+		__tui_16 := FooterBar(a)
+		__tui_2.AddChild(__tui_16.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}

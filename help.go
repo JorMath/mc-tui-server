@@ -28,6 +28,7 @@ var helpSections = []helpSection{
 		{"S", "schedule automatic backups (with retention) and daily restart"},
 		{"U", "update the instance: modpack version, or swap the jar for vanilla/paper/purpur/fabric"},
 		{"C", "clone the instance as a sandbox copy"},
+		{"J", "Java runtime: system, managed Temurin or a manual path"},
 		{"R / M / d", "rename / memory / delete"},
 	}},
 	{"Everywhere", []hint{

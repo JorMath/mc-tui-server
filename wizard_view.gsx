@@ -97,6 +97,30 @@ templ WizardView(a *app) {
 			</div>
 			<span class="font-dim">Used to filter Modrinth content; leave empty if unsure</span>
 		}
+		if a.wizStep.Get() == wizJava {
+			<span class="font-dim">{fmt.Sprintf("Minecraft %s needs Java %d+ — Temurin is downloaded once and reused", a.wizMCVersion(), a.wizJavaNeed)}</span>
+			if a.wizJavaBusy.Get() {
+				<span class="text-yellow">{a.wizJavaMsg.Get()}</span>
+				<span class="font-dim">Esc cancels the download</span>
+			} else if a.wizJavaTyping.Get() {
+				<div class="flex gap-1">
+					<span class="text-cyan font-bold">Java path:</span>
+					<span>{a.wizJavaPath.Get()}</span>
+					<span class="text-cyan blink">_</span>
+				</div>
+			} else {
+				for _, item := range a.wizJavaItems() {
+					if item.Sel {
+						<span class="font-bold text-cyan">{fmt.Sprintf("> %s", item.Text)}</span>
+					} else {
+						<span>{fmt.Sprintf("  %s", item.Text)}</span>
+					}
+				}
+			}
+			if a.wizJavaMsg.Get() != "" && !a.wizJavaBusy.Get() {
+				<span class="text-yellow">{a.wizJavaMsg.Get()}</span>
+			}
+		}
 		if a.wizStep.Get() == wizName {
 			<div class="flex gap-1">
 				<span class="text-cyan font-bold">Name:</span>
