@@ -169,6 +169,21 @@ type app struct {
 	impArgsDir string
 	impType    config.ServerType
 
+	// Paso Java del asistente (F2): detecta si el Java del sistema alcanza
+	// y, si no, ofrece descargar un Temurin gestionado o indicar una ruta.
+	// wizJavaNeed/Next solo se tocan desde las goroutines del paso.
+	wizJavaNeed     int
+	wizJavaNext     int
+	wizJavaSysMajor *tui.State[int]
+	wizJavaIdx      *tui.State[int]
+	wizJavaTyping   *tui.State[bool]
+	wizJavaMode     *tui.State[string]
+	wizJavaPath     *tui.State[string]
+	wizJavaSysLabel *tui.State[string]
+	wizJavaMsg      *tui.State[string]
+	wizJavaBusy     *tui.State[bool]
+	wizJavaCancel   context.CancelFunc
+
 	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
 	// se incrementa tras cada mutación para forzar el re-render.
 	fmOpen      *tui.State[bool]
@@ -247,6 +262,22 @@ type app struct {
 	// Overlay de ayuda (v0.3.1).
 	helpOpen *tui.State[bool]
 
+	// Gestión del Java por instancia (F2, tecla J): Java del sistema,
+	// runtime gestionado de Temurin o ruta manual. javaGen invalida las
+	// goroutines de un modal ya cerrado.
+	javaOpen     *tui.State[bool]
+	javaIdx      *tui.State[int]
+	javaPath     *tui.State[string]
+	javaTyping   *tui.State[bool]
+	javaMsg      *tui.State[string]
+	javaBusy     *tui.State[bool]
+	javaGen      *tui.State[int]
+	javaSysLabel *tui.State[string]
+	javaManLabel *tui.State[string]
+	javaCancel   context.CancelFunc
+	javaTarget   string
+	javaVersion  string
+
 	// Panel de jugadores (v0.3.0): whitelist, ops y bans.
 	plOpen   *tui.State[bool]
 	plTab    *tui.State[int]
@@ -321,6 +352,15 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		wizImpPath:    newState(&reg, ""),
 		wizImpVer:     newState(&reg, ""),
 
+		wizJavaIdx:      newState(&reg, 0),
+		wizJavaTyping:   newState(&reg, false),
+		wizJavaMode:     newState(&reg, ""),
+		wizJavaPath:     newState(&reg, ""),
+		wizJavaSysLabel: newState(&reg, ""),
+		wizJavaSysMajor: newState(&reg, 0),
+		wizJavaMsg:      newState(&reg, ""),
+		wizJavaBusy:     newState(&reg, false),
+
 		fmOpen:      newState(&reg, false),
 		fmTab:       newState(&reg, 0),
 		fmProps:     &properties.File{},
@@ -378,6 +418,16 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		plAdding: newState(&reg, false),
 		plText:   newState(&reg, ""),
 		plMsg:    newState(&reg, ""),
+
+		javaOpen:     newState(&reg, false),
+		javaIdx:      newState(&reg, 0),
+		javaPath:     newState(&reg, ""),
+		javaTyping:   newState(&reg, false),
+		javaMsg:      newState(&reg, ""),
+		javaBusy:     newState(&reg, false),
+		javaGen:      newState(&reg, 0),
+		javaSysLabel: newState(&reg, ""),
+		javaManLabel: newState(&reg, ""),
 	}
 	a.binders = reg
 	for _, m := range managers {
@@ -514,7 +564,7 @@ func (a *app) mainHints() []hint {
 		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
 		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
 		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
-		{"U", "update"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
+		{"U", "update"}, {"J", "java"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
 		{"d", "delete"}, {"?", "help"}, {"q", "quit"},
 	}
 }
@@ -535,6 +585,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	}
 	if a.suOpen.Get() {
 		return a.suKeyMap()
+	}
+	if a.javaOpen.Get() {
+		return a.javaKeyMap()
 	}
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
@@ -589,6 +642,7 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
 		tui.On(tui.Rune('S'), func(ke tui.KeyEvent) { a.schOpen() }),
 		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.updateAsk() }),
+		tui.On(tui.Rune('J'), func(ke tui.KeyEvent) { a.javaAsk() }),
 		tui.On(tui.Rune('C'), func(ke tui.KeyEvent) { a.cloneOpen() }),
 		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),

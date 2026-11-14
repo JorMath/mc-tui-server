@@ -12,8 +12,13 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 - **Lifecycle** — start, stop (graceful `stop` + kill fallback) and restart
   instances with one key. Crashes are detected (shown in red) and, with
   auto-restart enabled per instance (`a`), the server restarts itself after
-  5s — giving up after 3 crashes in 10 minutes. Starting also checks that
-  your Java is new enough for the instance's Minecraft version.
+  5s — giving up after 3 crashes in 10 minutes.
+- **Java runtime** — starting a server checks that your Java is new enough
+  for the instance's Minecraft version. If it isn't, press `J` to pick a
+  Java runtime per instance: the system Java on PATH, a Temurin JRE the app
+  downloads once per major version (shared by every instance that needs it),
+  or a manual path. The wizard offers the same choice when the system Java
+  can't run the version you're creating.
 - **Players online** — running instances are pinged via the server-list
   protocol every 5s; the sidebar shows `players N/M` next to CPU/RAM.
 - **World backups** — `b` zips the active world into `backups/` with a
@@ -51,7 +56,8 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
   Fabric's server launcher directly, or by running the official
-  Forge/NeoForge/Quilt installer (needs Java, which you already have).
+  Forge/NeoForge/Quilt installer (the app provisions the Java runtime it
+  needs if your system Java is too old).
   When the pack publishes a new version, `U` updates the instance in place:
   world backup first, then an index diff (changed files re-downloaded,
   removed ones deleted) and a loader reinstall if it changed.
@@ -61,8 +67,10 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
 
 ## Requirements
 
-- **Java** on your PATH (or set `java_path` per instance) — the app manages
-  server processes but does not install Java.
+- **Java** on your PATH (or pick a managed Temurin JRE per instance with
+  `J`) — the app downloads the runtime it needs from Adoptium. Managed
+  runtimes are Eclipse Temurin, licensed under GPLv2 with the Classpath
+  Exception.
 - A terminal with truecolor support and a font that includes block
   characters (Windows Terminal, or any modern Linux terminal). The layout
   adapts to the window size on the fly — sidebar, splash and hint bar
@@ -141,8 +149,9 @@ mc-tui-server -version   # print the version and exit
 | `c` or `Enter` | command bar (send commands to the server) |
 | `e` | files panel: properties · worlds · plugins (`1/2/3` or `Tab` to switch) |
 | `m` | Modrinth search & install (mods/plugins/datapacks per instance type; `Tab` switches) |
-| `n` | new instance wizard (type → version → name → memory → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
+| `n` | new instance wizard (type → version → name → memory → Java when needed → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
 | `M` | change the instance's memory (MB, applies on next start) |
+| `J` | Java runtime for the instance: system PATH, managed Temurin JRE or a manual path (server must be stopped) |
 | `a` | toggle auto-restart on crash for the instance (shown as `↻`) |
 | `b` | back up the active world into `backups/` (server must be stopped) |
 | `p` | players: whitelist / ops / bans (live commands while running) |
@@ -162,6 +171,10 @@ Every screen shows its active keys in the footer, highlighted in cyan.
 - Instance registry: `%APPDATA%\mc-tui-server\instances.json` (Windows) or
   `~/.config/mc-tui-server/instances.json` (Linux).
 - Servers created by the wizard: `<config dir>/mc-tui-server/servers/<name>/`.
+- Managed Java runtimes: `<config dir>/mc-tui-server/java/temurin-<major>/`
+  (one per Java major, shared by every instance that uses it).
+- Downloaded Temurin builds come from the Adoptium API and are verified
+  against the published SHA-256 before extraction.
 
 ## Development
 

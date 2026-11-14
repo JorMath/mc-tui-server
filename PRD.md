@@ -17,7 +17,7 @@ A continuación se detallan las funcionalidades del producto a realizar:
 * R7: Compilación para instalación mediante CLI para Windows y Linux.
 ## Alcance y límites
 * Dentro del alcance: Control de servidores locales en la misma máquina, lectura de logs por buffer y soporte para múltiples instancias guardadas en rutas locales.
-* Fuera del alcance: Conexiones SSH/SFTP remotas, instalación automática de dependencias del sistema (como Java) y despliegue en entornos Docker (para mantener la TUI ligera y nativa).
+* Fuera del alcance: Conexiones SSH/SFTP remotas y despliegue en entornos Docker (para mantener la TUI ligera y nativa).
 ## Métricas de éxito
 * Test con cobertura 100% del código
 * Auditoría de usabilidad por el propio agente

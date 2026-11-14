@@ -113,6 +113,8 @@ func (a *app) wizFinishImport() {
 		Dir:      a.impDir,
 		JarPath:  a.impJar,
 		ArgsDir:  a.impArgsDir,
+		JavaPath: a.wizJavaPath.Get(),
+		JavaMode: a.wizJavaMode.Get(),
 		MemoryMB: a.wizMemoryMB(),
 		Type:     a.impType,
 		Version:  strings.TrimSpace(a.wizImpVer.Get()),

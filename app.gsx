@@ -214,6 +214,8 @@ templ (a *app) Render() {
 					@HelpView(a)
 				} else if a.suOpen.Get() {
 					@ServerUpdateView(a)
+				} else if a.javaOpen.Get() {
+					@JavaView(a)
 				} else {
 					@ConsoleView(a)
 				}

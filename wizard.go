@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -15,6 +16,8 @@ import (
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
 	"github.com/JorMath/mc-tui-server/internal/installer"
+	"github.com/JorMath/mc-tui-server/internal/javacheck"
+	"github.com/JorMath/mc-tui-server/internal/javaenv"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	"github.com/JorMath/mc-tui-server/internal/mrpack"
 	"github.com/JorMath/mc-tui-server/internal/server"
@@ -36,6 +39,7 @@ const (
 	wizName
 	wizMem
 	wizEula
+	wizJava
 	wizDownload
 	wizError
 )
@@ -101,12 +105,31 @@ func (a *app) wizOpen() {
 	a.wizPackVerIdx.Set(0)
 	a.wizImpPath.Set("")
 	a.wizImpVer.Set("")
+	a.wizJavaSet("", "")
+	a.wizJavaIdx.Set(0)
+	a.wizJavaTyping.Set(false)
+	a.wizJavaSysLabel.Set("")
+	a.wizJavaMsg.Set("")
+	a.wizJavaBusy.Set(false)
+	a.wizJavaNeed = 0
+	a.wizJavaNext = wizName
+	a.wizJavaSysMajor.Set(0)
 	a.wizStep.Set(wizType)
 }
 
 func (a *app) wizClose() {
+	if a.wizJavaCancel != nil {
+		a.wizJavaCancel()
+		a.wizJavaCancel = nil
+	}
 	a.wizGen.Update(func(g int) int { return g + 1 })
 	a.wizStep.Set(wizOff)
+}
+
+// wizJavaSet guarda el modo y la ruta elegidos para el Java del asistente.
+func (a *app) wizJavaSet(mode, path string) {
+	a.wizJavaMode.Set(mode)
+	a.wizJavaPath.Set(path)
 }
 
 // wizFail muestra el error si el asistente sigue en la misma generación.
@@ -236,6 +259,8 @@ func (a *app) wizStartDownload() {
 			Dir:      dir,
 			JarPath:  jarPath,
 			ArgsDir:  argsDir,
+			JavaPath: a.wizJavaPath.Get(),
+			JavaMode: a.wizJavaMode.Get(),
 			MemoryMB: memMB,
 			Type:     typ,
 			Version:  version,
@@ -626,6 +651,8 @@ func (a *app) wizStartModpackInstall() {
 			Dir:       dir,
 			JarPath:   jarPath,
 			ArgsDir:   argsDir,
+			JavaPath:  a.wizJavaPath.Get(),
+			JavaMode:  a.wizJavaMode.Get(),
 			MemoryMB:  memMB,
 			Type:      loaderTypes[ld.Name],
 			Version:   ld.MC,
@@ -655,6 +682,199 @@ func (a *app) wizStartModpackInstall() {
 	}()
 }
 
+// wizMCVersion devuelve la versión de Minecraft que se está creando, para
+// calcular el Java mínimo. En import puede ser "" (no se chequea).
+func (a *app) wizMCVersion() string {
+	switch {
+	case a.wizIsImport():
+		return strings.TrimSpace(a.wizImpVer.Get())
+	case a.wizIsModpack():
+		vers := a.wizPackVers.Get()
+		i := a.wizPackVerIdx.Get()
+		if i >= 0 && i < len(vers) && len(vers[i].GameVersions) > 0 {
+			return vers[i].GameVersions[0]
+		}
+		return ""
+	default:
+		versions := a.wizVersions.Get()
+		i := a.wizVerIdx.Get()
+		if i >= 0 && i < len(versions) {
+			return versions[i]
+		}
+		return ""
+	}
+}
+
+// wizJavaEnter decide si el paso Java hace falta: si el Java del sistema
+// ya alcanza salta a next, y si no muestra las opciones de runtime.
+func (a *app) wizJavaEnter(next int) {
+	a.wizJavaNext = next
+	a.wizJavaIdx.Set(0)
+	a.wizJavaTyping.Set(false)
+	a.wizJavaMsg.Set("")
+	a.wizJavaSysMajor.Set(0)
+	a.wizJavaSysLabel.Set("checking...")
+	mc := a.wizMCVersion()
+	need := javacheck.Required(mc)
+	a.wizJavaNeed = need
+	if need == 0 {
+		a.wizStep.Set(next)
+		return
+	}
+	a.wizJavaBusy.Set(true)
+	a.wizJavaMsg.Set("Checking the installed Java...")
+	a.wizStep.Set(wizJava)
+	gen := a.wizGen.Get()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		major, err := javacheck.Version(ctx, "")
+		if a.wizGen.Get() != gen {
+			return
+		}
+		a.wizJavaBusy.Set(false)
+		if err == nil {
+			a.wizJavaSysMajor.Set(major)
+			a.wizJavaSysLabel.Set(fmt.Sprintf("Java %d", major))
+			if major >= need {
+				a.wizJavaMsg.Set("")
+				a.wizStep.Set(next)
+				return
+			}
+			a.wizJavaMsg.Set(fmt.Sprintf("Java %d found on PATH, but Minecraft %s needs Java %d+", major, mc, need))
+			return
+		}
+		a.wizJavaSysLabel.Set("not found")
+		a.wizJavaMsg.Set(fmt.Sprintf("No usable Java on PATH — Minecraft %s needs Java %d+", mc, need))
+	}()
+}
+
+// wizJavaItems arma las opciones del paso Java.
+func (a *app) wizJavaItems() []listItem {
+	idx := a.wizJavaIdx.Get()
+	return []listItem{
+		{Text: fmt.Sprintf("Download Temurin JRE %d (~50 MB, reused by other instances)", a.wizJavaNeed), Sel: idx == 0},
+		{Text: fmt.Sprintf("Use the Java on PATH — %s", a.wizJavaSysLabel.Get()), Sel: idx == 1},
+		{Text: "Enter a Java path manually", Sel: idx == 2},
+	}
+}
+
+func (a *app) wizJavaMove(delta int) {
+	a.wizJavaIdx.Update(func(i int) int {
+		i += delta
+		if i < 0 {
+			i = 0
+		}
+		if i > 2 {
+			i = 2
+		}
+		return i
+	})
+}
+
+// wizJavaChoose ejecuta la opción seleccionada en el paso Java.
+func (a *app) wizJavaChoose() {
+	switch a.wizJavaIdx.Get() {
+	case 0:
+		a.wizJavaProvision()
+	case 1:
+		major := a.wizJavaSysMajor.Get()
+		if major == 0 {
+			a.wizJavaMsg.Set("No usable Java was found on PATH — download a runtime or enter a path")
+			return
+		}
+		if major < a.wizJavaNeed {
+			a.wizJavaMsg.Set(fmt.Sprintf("The Java on PATH is version %d, but %d+ is needed", major, a.wizJavaNeed))
+			return
+		}
+		a.wizJavaSet("system", "")
+		a.wizJavaMsg.Set("")
+		a.wizStep.Set(a.wizJavaNext)
+	case 2:
+		a.wizJavaTyping.Set(true)
+		a.wizJavaMsg.Set("")
+	}
+}
+
+// wizJavaProvision descarga el runtime gestionado si no está ya en disco.
+func (a *app) wizJavaProvision() {
+	need := a.wizJavaNeed
+	if need == 0 {
+		a.wizStep.Set(a.wizJavaNext)
+		return
+	}
+	if rt, ok := javaenv.Installed(a.dataDir, need); ok {
+		a.wizJavaSet("managed", rt.Path)
+		a.wizJavaMsg.Set("")
+		a.wizStep.Set(a.wizJavaNext)
+		return
+	}
+	gen := a.wizGen.Get()
+	ctx, cancel := context.WithCancel(context.Background())
+	a.wizJavaCancel = cancel
+	a.wizJavaBusy.Set(true)
+	a.wizJavaMsg.Set(fmt.Sprintf("Downloading Temurin JRE %d...", need))
+	go func() {
+		defer cancel()
+		rt, err := javaenv.Ensure(ctx, need, a.dataDir, func(done, total int64) {
+			if a.wizGen.Get() != gen || total <= 0 {
+				return
+			}
+			a.wizJavaMsg.Set(fmt.Sprintf("Downloading Java %d... %d%% (%dMB of %dMB)",
+				need, done*100/total, done/(1024*1024), total/(1024*1024)))
+		})
+		if a.wizGen.Get() != gen {
+			return
+		}
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			a.wizJavaBusy.Set(false)
+			a.wizJavaMsg.Set("Error: " + err.Error())
+			return
+		}
+		a.wizJavaBusy.Set(false)
+		a.wizJavaMsg.Set("")
+		a.wizJavaSet("managed", rt.Path)
+		a.wizStep.Set(a.wizJavaNext)
+	}()
+}
+
+// wizJavaManualSubmit valida la ruta escrita y la usa para la instancia.
+func (a *app) wizJavaManualSubmit() {
+	p := strings.TrimSpace(a.wizJavaPath.Get())
+	if p == "" {
+		a.wizJavaMsg.Set("Type the full path to java or java.exe")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	major, err := javacheck.Version(ctx, p)
+	if err != nil {
+		a.wizJavaMsg.Set("Error: " + err.Error())
+		return
+	}
+	if a.wizJavaNeed > 0 && major < a.wizJavaNeed {
+		a.wizJavaMsg.Set(fmt.Sprintf("That Java is version %d, but %d+ is needed", major, a.wizJavaNeed))
+		return
+	}
+	a.wizJavaSet("manual", p)
+	a.wizJavaTyping.Set(false)
+	a.wizJavaMsg.Set("")
+	a.wizStep.Set(a.wizJavaNext)
+}
+
+// wizJavaCancelRun aborta la descarga y deja el paso abierto.
+func (a *app) wizJavaCancelRun() {
+	if a.wizJavaCancel != nil {
+		a.wizJavaCancel()
+		a.wizJavaCancel = nil
+	}
+	a.wizJavaBusy.Set(false)
+	a.wizJavaMsg.Set("Download cancelled — pick an option or Esc to cancel the wizard")
+}
+
 func (a *app) wizKeyMap() tui.KeyMap {
 	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.wizClose() })
 	switch a.wizStep.Get() {
@@ -673,7 +893,43 @@ func (a *app) wizKeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizMoveVersion(1) }),
 			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.wizMoveVersion(-10) }),
 			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMoveVersion(10) }),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizName) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizJavaEnter(wizName) }),
+			esc,
+		}
+	case wizJava:
+		if a.wizJavaBusy.Get() {
+			return tui.KeyMap{
+				tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.wizJavaCancelRun() }),
+				tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {}),
+			}
+		}
+		if a.wizJavaTyping.Get() {
+			return tui.KeyMap{
+				tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+					if ke.Rune >= ' ' {
+						a.wizJavaPath.Update(func(s string) string { return s + string(ke.Rune) })
+					}
+				}),
+				tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+					a.wizJavaPath.Update(func(s string) string {
+						r := []rune(s)
+						if len(r) == 0 {
+							return s
+						}
+						return string(r[:len(r)-1])
+					})
+				}),
+				tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizJavaManualSubmit() }),
+				tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) {
+					a.wizJavaTyping.Set(false)
+					a.wizJavaMsg.Set("")
+				}),
+			}
+		}
+		return tui.KeyMap{
+			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.wizJavaMove(-1) }),
+			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.wizJavaMove(1) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizJavaChoose() }),
 			esc,
 		}
 	case wizPackSearch:
@@ -714,7 +970,7 @@ func (a *app) wizKeyMap() tui.KeyMap {
 			tui.OnStop(tui.KeyPageDown, func(ke tui.KeyEvent) { a.wizMovePackVer(10) }),
 			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) {
 				a.wizMsg.Set("")
-				a.wizStep.Set(wizName)
+				a.wizJavaEnter(wizName)
 			}),
 			esc,
 		}
@@ -753,7 +1009,7 @@ func (a *app) wizKeyMap() tui.KeyMap {
 					return s[:len(s)-1]
 				})
 			}),
-			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizStep.Set(wizEula) }),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizJavaEnter(wizEula) }),
 			esc,
 		}
 	case wizName:
@@ -829,6 +1085,11 @@ func (a *app) wizHints() []hint {
 		return []hint{{"Esc", "cancel"}}
 	case wizVersion:
 		return []hint{{"↑/↓ PgUp/PgDn", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizJava:
+		if a.wizJavaTyping.Get() {
+			return []hint{{"type or paste", "java path"}, {"Enter", "validate"}, {"Esc", "back"}}
+		}
+		return []hint{{"↑/↓", "choose"}, {"Enter", "continue"}, {"Esc", "cancel"}}
 	case wizImpPath:
 		return []hint{{"type or paste", "folder path"}, {"Enter", "detect"}, {"Esc", "cancel"}}
 	case wizImpVer:
@@ -853,6 +1114,10 @@ func (a *app) wizHints() []hint {
 }
 
 func (a *app) wizStepTitle() string {
+	if a.wizStep.Get() == wizJava {
+		// Sin fracción: el paso se omite cuando el Java del sistema alcanza.
+		return "Java runtime"
+	}
 	if a.wizIsImport() {
 		switch a.wizStep.Get() {
 		case wizType:
