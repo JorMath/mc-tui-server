@@ -34,7 +34,7 @@ func newJavaApp(t *testing.T) (*app, config.Instance, *server.Manager) {
 	return a, inst, mgr
 }
 
-// TestJavaSetPersistsMode fija el contrato del modal J: el modo y la ruta
+// TestJavaSetPersistsMode fija el contrato del modal de Java: el modo y la ruta
 // se guardan en el Store, en disco y en el Manager de la instancia.
 func TestJavaSetPersistsMode(t *testing.T) {
 	a, inst, mgr := newJavaApp(t)

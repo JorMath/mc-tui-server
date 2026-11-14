@@ -262,7 +262,13 @@ type app struct {
 	// Overlay de ayuda (v0.3.1).
 	helpOpen *tui.State[bool]
 
-	// Gestión del Java por instancia (F2, tecla J): Java del sistema,
+	// Actions menu (F3) opened with Enter: groups the actions that used to
+	// be global single-letter shortcuts.
+	menuOpen *tui.State[bool]
+	menuIdx  *tui.State[int]
+	menuMsg  *tui.State[string]
+
+	// Gestión del Java por instancia (F2): Java del sistema,
 	// runtime gestionado de Temurin o ruta manual. javaGen invalida las
 	// goroutines de un modal ya cerrado.
 	javaOpen     *tui.State[bool]
@@ -411,6 +417,9 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		suGen:      newState(&reg, 0),
 
 		helpOpen: newState(&reg, false),
+		menuOpen: newState(&reg, false),
+		menuIdx:  newState(&reg, 0),
+		menuMsg:  newState(&reg, ""),
 		plOpen:   newState(&reg, false),
 		plTab:    newState(&reg, 0),
 		plList:   newState(&reg, []string{}),
@@ -561,11 +570,8 @@ func (a *app) appendLog(name, line string) {
 // varias líneas si no caben a lo ancho.
 func (a *app) mainHints() []hint {
 	return []hint{
-		{"↑/↓", "select"}, {"s", "start"}, {"x", "stop"}, {"r", "restart"},
-		{"c/Enter", "command"}, {"e", "files"}, {"m", "modrinth"}, {"p", "players"},
-		{"b", "backup"}, {"n", "new"}, {"a", "auto-restart"}, {"S", "schedule"},
-		{"U", "update"}, {"J", "java"}, {"C", "clone"}, {"R", "rename"}, {"M", "memory"},
-		{"d", "delete"}, {"?", "help"}, {"q", "quit"},
+		{"↑/↓", "select"}, {"Enter", "actions"}, {"s/x/r", "lifecycle"},
+		{"c", "command"}, {"n", "new"}, {"?", "help"}, {"q", "quit"},
 	}
 }
 
@@ -582,6 +588,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	}
 	if a.helpOpen.Get() {
 		return a.helpKeyMap()
+	}
+	if a.menuOpen.Get() {
+		return a.menuKeyMap()
 	}
 	if a.suOpen.Get() {
 		return a.suKeyMap()
@@ -630,21 +639,9 @@ func (a *app) KeyMap() tui.KeyMap {
 	return tui.KeyMap{
 		tui.On(tui.Rune('q'), func(ke tui.KeyEvent) { ke.App().Stop() }),
 		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
-		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
+		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.openMenu() }),
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
-		tui.On(tui.Rune('e'), func(ke tui.KeyEvent) { a.fmOpenPanel() }),
-		tui.On(tui.Rune('m'), func(ke tui.KeyEvent) { a.mrOpenPanel() }),
-		tui.On(tui.Rune('p'), func(ke tui.KeyEvent) { a.plOpenPanel() }),
 		tui.On(tui.Rune('?'), func(ke tui.KeyEvent) { a.helpOpen.Set(true) }),
-		tui.On(tui.Rune('R'), func(ke tui.KeyEvent) { a.renOpen() }),
-		tui.On(tui.Rune('M'), func(ke tui.KeyEvent) { a.memOpen() }),
-		tui.On(tui.Rune('a'), func(ke tui.KeyEvent) { a.toggleAutoRestart() }),
-		tui.On(tui.Rune('b'), func(ke tui.KeyEvent) { a.backupWorld() }),
-		tui.On(tui.Rune('S'), func(ke tui.KeyEvent) { a.schOpen() }),
-		tui.On(tui.Rune('U'), func(ke tui.KeyEvent) { a.updateAsk() }),
-		tui.On(tui.Rune('J'), func(ke tui.KeyEvent) { a.javaAsk() }),
-		tui.On(tui.Rune('C'), func(ke tui.KeyEvent) { a.cloneOpen() }),
-		tui.On(tui.Rune('d'), func(ke tui.KeyEvent) { a.delAsk() }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
 		tui.On(tui.Rune('k'), func(ke tui.KeyEvent) { a.moveSelection(-1) }),
