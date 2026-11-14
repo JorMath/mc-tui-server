@@ -888,23 +888,28 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return HelpView(a)
 			})
 			__tui_6.AddChild(__tui_12)
-		} else if a.suOpen.Get() {
+		} else if a.menuOpen.Get() {
 			__tui_13 := app.Mount(a, 6, func() tui.Component {
-				return ServerUpdateView(a)
+				return MenuView(a)
 			})
 			__tui_6.AddChild(__tui_13)
-		} else if a.javaOpen.Get() {
+		} else if a.suOpen.Get() {
 			__tui_14 := app.Mount(a, 7, func() tui.Component {
-				return JavaView(a)
+				return ServerUpdateView(a)
 			})
 			__tui_6.AddChild(__tui_14)
+		} else if a.javaOpen.Get() {
+			__tui_15 := app.Mount(a, 8, func() tui.Component {
+				return JavaView(a)
+			})
+			__tui_6.AddChild(__tui_15)
 		} else {
-			__tui_15 := ConsoleView(a)
-			__tui_6.AddChild(__tui_15.Root)
+			__tui_16 := ConsoleView(a)
+			__tui_6.AddChild(__tui_16.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_16 := FooterBar(a)
-		__tui_2.AddChild(__tui_16.Root)
+		__tui_17 := FooterBar(a)
+		__tui_2.AddChild(__tui_17.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}

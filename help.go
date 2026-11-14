@@ -10,26 +10,29 @@ type helpSection struct {
 }
 
 var helpSections = []helpSection{
-	{"Instances", []hint{
+	{"Main screen", []hint{
 		{"↑/↓ · j/k", "select instance"},
+		{"Enter", "open the actions menu"},
 		{"s / x / r", "start / stop / restart"},
-		{"c · Enter", "command bar (sends to the server console)"},
-		{"a", "toggle auto-restart on crash (↻)"},
+		{"c", "command bar (sends to the server console)"},
+		{"n", "new instance wizard"},
 		{"PgUp/PgDn · End", "scroll the console / follow live"},
+		{"?", "this help"},
+		{"q", "quit (stops running servers gracefully)"},
 	}},
-	{"Panels", []hint{
-		{"e", "files: properties, worlds, plugins, backups, logs"},
-		{"m", "Modrinth: mods/plugins/datapacks (Tab switches, u updates all)"},
-		{"p", "players: whitelist / ops / bans"},
-		{"n", "new instance wizard (7 distros, modpacks, import)"},
+	{"Actions menu", []hint{
+		{"↑/↓ · j/k", "choose an action"},
+		{"Enter", "run the selected action"},
+		{"Esc", "close the menu"},
+		{"Lifecycle", "start, stop, restart, send command"},
+		{"Content", "files, Modrinth, players"},
+		{"Maintenance", "backup world, scheduler, server update, Java runtime"},
+		{"Instance", "auto-restart, clone, rename, memory, delete"},
 	}},
-	{"Instance management", []hint{
-		{"b", "back up the active world"},
-		{"S", "schedule automatic backups (with retention) and daily restart"},
-		{"U", "update the instance: modpack version, or swap the jar for vanilla/paper/purpur/fabric"},
-		{"C", "clone the instance as a sandbox copy"},
-		{"J", "Java runtime: system, managed Temurin or a manual path"},
-		{"R / M / d", "rename / memory / delete"},
+	{"Panels (opened from the actions menu)", []hint{
+		{"Files", "properties, worlds, plugins, backups, logs"},
+		{"Modrinth", "mods/plugins/datapacks (Tab switches, u updates all)"},
+		{"Players", "whitelist / ops / bans"},
 	}},
 	{"Everywhere", []hint{
 		{"Esc", "close panel or cancel dialog"},

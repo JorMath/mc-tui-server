@@ -1,6 +1,7 @@
-// java.go: gestión del runtime de Java (F2). La tecla J abre un modal por
-// instancia para elegir el Java del sistema, un Temurin gestionado que la
-// app descarga una sola vez por major, o una ruta manual.
+// java.go: gestión del runtime de Java (F2). El modal por instancia se abre
+// desde el menú de acciones (Enter) y permite elegir el Java del sistema, un
+// Temurin gestionado que la app descarga una sola vez por major, o una ruta
+// manual.
 package main
 
 import (
@@ -15,7 +16,7 @@ import (
 	tui "github.com/grindlemire/go-tui"
 )
 
-// javaAsk (tecla J) abre el modal de Java para la instancia seleccionada.
+// javaAsk abre el modal de Java para la instancia seleccionada.
 // Cambiar el runtime exige el servidor detenido, igual que SetInstance.
 func (a *app) javaAsk() {
 	mgr := a.current()
