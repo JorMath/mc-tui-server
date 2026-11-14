@@ -367,8 +367,8 @@ func (a *app) fmDoRestore() {
 	a.fmReloadLists(inst)
 }
 
-// backupWorld (tecla b en la vista principal) comprime el mundo activo en
-// backups/ de la instancia. Exige el servidor detenido: Minecraft escribe
+// backupWorld (menú de acciones, vista principal) comprime el mundo activo
+// en backups/ de la instancia. Exige el servidor detenido: Minecraft escribe
 // el mundo constantemente mientras corre.
 func (a *app) backupWorld() {
 	mgr := a.current()

@@ -43,6 +43,10 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   installer inside the instance automatically. You can also import an
   existing server folder — launch mode and type are detected, files stay
   where they are.
+- **Server updates** — Update server software in the actions menu moves a
+  jar-based instance (Vanilla, Paper, Purpur, Fabric) to another Minecraft
+  version: it keeps the world and config, backs the world up first, then
+  swaps the jar and optionally restarts. Downgrades are warned about.
 - **File manager** — edit `server.properties` (comments preserved), list
   and delete worlds and plugins/mods safely.
 - **Modrinth** — search content filtered by your instance's loader and game

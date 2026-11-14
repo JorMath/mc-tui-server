@@ -1,7 +1,8 @@
-// serverupdate.go: actualización del software del servidor (F1) — la tecla U
-// es contextual: un modpack sigue yendo a packupdate.go y una instancia
-// jar-based (vanilla/paper/purpur/fabric) abre el panel de versiones, baja el
-// jar nuevo a staging, valida la firma y rota el anterior a un .bak.
+// serverupdate.go: actualización del software del servidor (F1) — la acción
+// del menú es contextual: un modpack sigue yendo a packupdate.go y una
+// instancia jar-based (vanilla/paper/purpur/fabric) abre el panel de
+// versiones, baja el jar nuevo a staging, valida la firma y rota el anterior
+// a un .bak.
 package main
 
 import (
@@ -30,8 +31,8 @@ func jarUpdatable(t config.ServerType) bool {
 	return false
 }
 
-// updateAsk (tecla U) enruta según el tipo de instancia: modpack al flujo
-// existente, jar-based al panel nuevo, installer-based a un aviso.
+// updateAsk enruta según el tipo de instancia: modpack al flujo existente,
+// jar-based al panel nuevo, installer-based a un aviso.
 func (a *app) updateAsk() {
 	mgr := a.current()
 	if mgr == nil {

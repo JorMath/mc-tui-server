@@ -1,6 +1,6 @@
 // packupdate.go: actualización de instancias creadas desde un modpack de
-// Modrinth (v0.3.0) — tecla U: busca la versión nueva del pack, confirma,
-// respalda el mundo y aplica el diff del índice.
+// Modrinth (v0.3.0) — acción del menú: busca la versión nueva del pack,
+// confirma, respalda el mundo y aplica el diff del índice.
 package main
 
 import (
@@ -18,7 +18,7 @@ import (
 	tui "github.com/grindlemire/go-tui"
 )
 
-// pkUpdateAsk (tecla U) busca si el modpack de la instancia tiene una
+// pkUpdateAsk busca si el modpack de la instancia tiene una
 // versión más nueva y pide confirmación antes de tocar nada.
 func (a *app) pkUpdateAsk() {
 	mgr := a.current()
