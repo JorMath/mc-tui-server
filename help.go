@@ -16,6 +16,8 @@ var helpSections = []helpSection{
 		{"s / x / r", "start / stop / restart"},
 		{"c", "command bar (sends to the server console)"},
 		{"n", "new instance wizard"},
+		{"i", "incident panel (explains the last crash)"},
+		{"D", "doctor (pre-flight checks)"},
 		{"PgUp/PgDn · End", "scroll the console / follow live"},
 		{"?", "this help"},
 		{"q", "quit (stops running servers gracefully)"},
@@ -34,6 +36,8 @@ var helpSections = []helpSection{
 		{"Modrinth/Hangar", "mods/plugins/datapacks (Tab type, f source, u updates all)"},
 		{"Hangar versions", "t toggles Release/Snapshot"},
 		{"Players", "whitelist / ops / bans"},
+		{"Incident (i)", "last crash: cause, evidence paths, excerpt; u uploads after confirming"},
+		{"Doctor (D)", "pre-flight checks; r re-runs them"},
 	}},
 	{"Everywhere", []hint{
 		{"Esc", "close panel or cancel dialog"},

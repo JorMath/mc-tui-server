@@ -41,11 +41,16 @@ templ Sidebar(a *app, rowRefs *tui.RefMap[string]) {
 		for i, mgr := range a.managers.Get() {
 			<div class="flex-col" ref={rowRefs} key={mgr.Instance().Name}>
 				<div class="flex justify-between">
-					if i == a.selected.Get() {
-						<span class="font-bold text-cyan">{fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
-					} else {
-						<span>{fmt.Sprintf("  %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
-					}
+					<div class="flex gap-1">
+						if i == a.selected.Get() {
+							<span class="font-bold text-cyan">{fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
+						} else {
+							<span>{fmt.Sprintf("  %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))}</span>
+						}
+						if a.hasIncident(mgr.Instance().Name) {
+							<span class="text-red font-bold">!</span>
+						}
+					</div>
 					if a.statusText(mgr.Instance().Name) == string(server.Running) {
 						<span class="text-green">{a.statusText(mgr.Instance().Name)}</span>
 					} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
@@ -221,6 +226,10 @@ templ (a *app) Render() {
 					@ServerUpdateView(a)
 				} else if a.javaOpen.Get() {
 					@JavaView(a)
+				} else if a.incOpen.Get() {
+					@IncidentView(a)
+				} else if a.docOpen.Get() {
+					@DoctorView(a)
 				} else {
 					@ConsoleView(a)
 				}

@@ -13,6 +13,7 @@ import (
 
 	"github.com/JorMath/mc-tui-server/internal/backup"
 	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/incident"
 	"github.com/JorMath/mc-tui-server/internal/javacheck"
 	"github.com/JorMath/mc-tui-server/internal/mcping"
 	"github.com/JorMath/mc-tui-server/internal/metrics"
@@ -107,6 +108,7 @@ func (a *app) refreshStatuses() {
 	a.refreshSamples()
 	a.refreshPings()
 	a.refreshPorts()
+	a.refreshIncidents()
 	a.refreshSchedules()
 }
 
@@ -126,12 +128,13 @@ func (a *app) refreshSchedules() {
 		name := inst.Name
 		if inst.BackupHours > 0 {
 			last, started := a.lastBackup[name]
-			switch {
-			case !started:
-				// El primer backup ocurre N horas después de arrancar.
-				a.lastBackup[name] = now
-			case now.Sub(last) >= time.Duration(inst.BackupHours)*time.Hour:
-				a.lastBackup[name] = now
+			due, anchor := backupDue(last, started, now, inst.BackupHours)
+			if due || !started {
+				// The first backup anchors the clock and only fires after the
+				// interval, so starting the server does not create a backup.
+				a.lastBackup[name] = anchor
+			}
+			if due {
 				a.liveBackup(mgr, inst)
 			}
 		}
@@ -139,6 +142,37 @@ func (a *app) refreshSchedules() {
 			a.tickRestart(mgr, inst, now)
 		}
 	}
+}
+
+// backupDue decides whether a scheduled backup fires. last is the previous
+// anchor and started tells whether the instance was already anchored; the
+// returned time is the new anchor and equals now whenever it fires. Not
+// started means "anchor only": the first backup happens one full interval
+// after the server starts.
+func backupDue(last time.Time, started bool, now time.Time, hours int) (bool, time.Time) {
+	if !started {
+		return false, now
+	}
+	if now.Sub(last) >= time.Duration(hours)*time.Hour {
+		return true, now
+	}
+	return false, last
+}
+
+// restartEvent names the scheduled restart milestone for the current clock:
+// the 5-minute warning, the 1-minute warning, the restart itself, or "".
+// minutesBefore handles the midnight wrap, so a restart at 00:03 warns at
+// 23:58.
+func restartEvent(clock, restart string) string {
+	switch clock {
+	case minutesBefore(restart, 5):
+		return "w5"
+	case minutesBefore(restart, 1):
+		return "w1"
+	case restart:
+		return "restart"
+	}
+	return ""
 }
 
 // minutesBefore devuelve la hora "HH:MM" m minutos antes de t ("HH:MM").
@@ -165,12 +199,12 @@ func (a *app) tickRestart(mgr *server.Manager, inst config.Instance, now time.Ti
 		_ = mgr.Send("say " + msg)
 		a.appendLog(name, "[mc-tui] "+msg)
 	}
-	switch clock {
-	case minutesBefore(inst.RestartTime, 5):
+	switch restartEvent(clock, inst.RestartTime) {
+	case "w5":
 		warn("w5", "Server restarting in 5 minutes")
-	case minutesBefore(inst.RestartTime, 1):
+	case "w1":
 		warn("w1", "Server restarting in 1 minute")
-	case inst.RestartTime:
+	case "restart":
 		if a.lastRestartDay[name] == day {
 			return
 		}
@@ -292,6 +326,47 @@ func (a *app) portText(name string) string {
 	return fmt.Sprintf(":%d", port)
 }
 
+// refreshIncidents re-reads the cached crash-evidence markers every ~5s (10
+// ticks of 500ms), with the same convention as refreshPorts: the sidebar must
+// never stat crash-reports/ during a render.
+func (a *app) refreshIncidents() {
+	a.incidentTick++
+	if a.incidentTick%10 != 0 {
+		return
+	}
+	a.reloadIncidents()
+}
+
+// reloadIncidents rebuilds the crash-evidence cache from the instance
+// registry.
+func (a *app) reloadIncidents() {
+	a.incidents.Set(instanceIncidents(a.store.Instances()))
+}
+
+// instanceIncidents maps each instance name to whether it holds a
+// crash-reports directory.
+func instanceIncidents(instances []config.Instance) map[string]bool {
+	out := make(map[string]bool, len(instances))
+	for _, inst := range instances {
+		out[inst.Name] = incident.Has(inst.Dir)
+	}
+	return out
+}
+
+// hasIncident reports whether the sidebar should mark the instance.
+func (a *app) hasIncident(name string) bool {
+	return a.incidents.Get()[name]
+}
+
+// markIncident records crash evidence for an instance right away, so the
+// sidebar marker does not wait for the next cache refresh.
+func (a *app) markIncident(name string) {
+	a.incidents.Update(func(m map[string]bool) map[string]bool {
+		m[name] = true
+		return m
+	})
+}
+
 // refreshPings consulta el server-list-ping de las instancias corriendo
 // cada ~5s (10 ticks de 500ms) para mostrar jugadores online.
 func (a *app) refreshPings() {
@@ -341,6 +416,7 @@ func (a *app) playersText(name string) string {
 func (a *app) onCrash(mgr *server.Manager) {
 	name := mgr.Instance().Name
 	a.appendLog(name, "[mc-tui] Server crashed (exited with an error)")
+	a.markIncident(name)
 	inst, ok := a.store.Get(name)
 	if !ok || !inst.AutoRestart {
 		return
