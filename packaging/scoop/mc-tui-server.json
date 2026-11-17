@@ -1,10 +1,10 @@
 {
-    "version": "0.6.0",
+    "version": "0.6.1",
     "description": "Terminal UI to manage local Minecraft servers: instances, modpacks, Modrinth and Hangar content, backups and schedules",
     "homepage": "https://github.com/JorMath/mc-tui-server",
     "license": "MIT",
-    "url": "https://github.com/JorMath/mc-tui-server/releases/download/v0.6.0/mc-tui-server_windows_amd64.exe#/mc-tui-server.exe",
-    "hash": "2591f1340b7d7f6ccd07207364f35285241102c8ed2955b9ce42875768b33db8",
+    "url": "https://github.com/JorMath/mc-tui-server/releases/download/v0.6.1/mc-tui-server_windows_amd64.exe#/mc-tui-server.exe",
+    "hash": "64a7e83bb84cd23808da72889ed9d7bcad769036dcab8c31ad817a634eabf6fe",
     "bin": "mc-tui-server.exe",
     "checkver": {
         "github": "https://github.com/JorMath/mc-tui-server"
