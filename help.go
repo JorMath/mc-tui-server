@@ -25,13 +25,14 @@ var helpSections = []helpSection{
 		{"Enter", "run the selected action"},
 		{"Esc", "close the menu"},
 		{"Lifecycle", "start, stop, restart, send command"},
-		{"Content", "files, Modrinth, players"},
+		{"Content", "files, Modrinth/Hangar, players"},
 		{"Maintenance", "backup world, scheduler, server update, Java runtime"},
 		{"Instance", "auto-restart, clone, rename, memory, delete"},
 	}},
 	{"Panels (opened from the actions menu)", []hint{
 		{"Files", "properties, worlds, plugins, backups, logs"},
-		{"Modrinth", "mods/plugins/datapacks (Tab switches, u updates all)"},
+		{"Modrinth/Hangar", "mods/plugins/datapacks (Tab type, f source, u updates all)"},
+		{"Hangar versions", "t toggles Release/Snapshot"},
 		{"Players", "whitelist / ops / bans"},
 	}},
 	{"Everywhere", []hint{

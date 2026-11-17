@@ -12,6 +12,7 @@ import (
 
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
+	"github.com/JorMath/mc-tui-server/internal/hangar"
 	"github.com/JorMath/mc-tui-server/internal/mcping"
 	"github.com/JorMath/mc-tui-server/internal/metrics"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
@@ -212,15 +213,19 @@ type app struct {
 	fmLogLines  *tui.State[[]string]
 	fmLogScroll *tui.State[int]
 
-	// Buscador de Modrinth (R6). mrGen invalida goroutines de un panel
-	// cerrado, igual que wizGen. mrKind es el tipo de contenido activo
-	// (mods/plugins/datapacks) según lo que soporte la instancia.
+	// Content panel (R6, extended by F3): Modrinth plus Hangar plugins on
+	// Paper/Purpur. mrGen invalidates goroutines of a closed panel, equal to
+	// wizGen. mrKind is the active content type (mods/plugins/datapacks)
+	// supported by the instance; mrSource filters the source (all,
+	// modrinth, hangar).
 	mr        *modrinth.Client
+	hangar    *hangar.Client
 	mrKind    *tui.State[string]
+	mrSource  *tui.State[string]
 	mrOpen    *tui.State[bool]
 	mrTyping  *tui.State[bool]
 	mrQuery   *tui.State[string]
-	mrResults *tui.State[[]modrinth.Project]
+	mrResults *tui.State[[]contentItem]
 	mrIdx     *tui.State[int]
 	mrBusy    *tui.State[bool]
 	mrGen     *tui.State[int]
@@ -229,10 +234,12 @@ type app struct {
 	// mrUpd (el mutex del State ordena la publicación) y se lee al aplicar.
 	mrUpd     *tui.State[bool]
 	mrPending []pendingUpdate
-	// Selector de versión de un proyecto (tecla v).
-	mrVerMode *tui.State[bool]
-	mrVers    *tui.State[[]modrinth.ModVersion]
-	mrVerIdx  *tui.State[int]
+	// Version selector of a project (key v). mrSnapshot toggles Release vs
+	// Snapshot channels for Hangar versions.
+	mrVerMode  *tui.State[bool]
+	mrSnapshot *tui.State[bool]
+	mrVers     *tui.State[[]contentVersion]
+	mrVerIdx   *tui.State[int]
 
 	// Actualización de modpack (v0.3.0): pkConfirm es el texto de la
 	// pregunta ("" = sin diálogo); pkPending sigue el mismo patrón de
@@ -391,18 +398,21 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		fmLogScroll: newState(&reg, 0),
 
 		mr:          &modrinth.Client{},
+		hangar:      &hangar.Client{},
 		mrKind:      newState(&reg, ""),
+		mrSource:    newState(&reg, sourceAll),
 		mrOpen:      newState(&reg, false),
 		mrTyping:    newState(&reg, false),
 		mrQuery:     newState(&reg, ""),
-		mrResults:   newState(&reg, []modrinth.Project{}),
+		mrResults:   newState(&reg, []contentItem{}),
 		mrIdx:       newState(&reg, 0),
 		mrBusy:      newState(&reg, false),
 		mrGen:       newState(&reg, 0),
 		mrMsg:       newState(&reg, ""),
 		mrUpd:       newState(&reg, false),
 		mrVerMode:   newState(&reg, false),
-		mrVers:      newState(&reg, []modrinth.ModVersion{}),
+		mrSnapshot:  newState(&reg, false),
+		mrVers:      newState(&reg, []contentVersion{}),
 		mrVerIdx:    newState(&reg, 0),
 		pkConfirm:   newState(&reg, ""),
 		newProvider: func(t config.ServerType) (download.Provider, error) { return download.For(t, nil) },
