@@ -13,7 +13,13 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   instances with one key. Crashes are detected (shown in red) and, with
   auto-restart enabled per instance (`Enter` → actions menu → Auto-restart),
   the server restarts itself after 5s — giving up after 3 crashes in
-  10 minutes.
+  10 minutes. Once an instance has crash evidence the sidebar marks it with
+  a red `!`: `i` opens the incident panel with the likely cause, the crash
+  report and log paths and the relevant excerpt, and `u` uploads the crash
+  report to [mclo.gs](https://mclo.gs) — a public paste service — after an
+  explicit confirmation (`y`/`n`) that warns it can contain local paths and
+  IP addresses. `D` opens the doctor: pre-flight checks for Java, EULA,
+  server files, world, port and backups, re-runnable with `r`.
 - **Ports** — new instances get the first free TCP port from 25565; ports
   already declared by another instance are skipped even when that server is
   stopped, and the chosen port is written to `server.properties`. The sidebar
@@ -168,6 +174,8 @@ mc-tui-server -version   # print the version and exit
 | `s` / `x` / `r` | start / stop / restart |
 | `c` | command bar (send commands to the server) |
 | `n` | new instance wizard (type → version → Java when needed → name → memory → port → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
+| `i` | incident panel for the selected instance (`u` uploads the crash report to mclo.gs after confirming) |
+| `D` | doctor: pre-flight checks for the selected instance (`r` re-runs them) |
 | `PgUp/PgDn · End` | scroll the console / follow the live log |
 | `?` | help overlay with every shortcut |
 | `q` | quit (running servers are stopped gracefully) |

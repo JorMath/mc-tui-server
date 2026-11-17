@@ -194,64 +194,76 @@ func Sidebar(a *app, rowRefs *tui.RefMap[string]) *SidebarView {
 			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
 			tui.WithJustify(tui.JustifySpaceBetween),
 		)
+		__tui_6 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
 		if i == a.selected.Get() {
-			__tui_6 := tui.New(
+			__tui_7 := tui.New(
 				tui.WithText(fmt.Sprintf("> %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))),
 				tui.WithTextStyle(tui.NewStyle().Bold().Foreground(tui.Cyan)),
 			)
-			__tui_5.AddChild(__tui_6)
+			__tui_6.AddChild(__tui_7)
 		} else {
-			__tui_7 := tui.New(
+			__tui_8 := tui.New(
 				tui.WithText(fmt.Sprintf("  %s%s", mgr.Instance().Name, autoMark(a.autoRestartOn(mgr.Instance().Name)))),
 			)
-			__tui_5.AddChild(__tui_7)
+			__tui_6.AddChild(__tui_8)
 		}
+		if a.hasIncident(mgr.Instance().Name) {
+			__tui_9 := tui.New(
+				tui.WithText("!"),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
+			)
+			__tui_6.AddChild(__tui_9)
+		}
+		__tui_5.AddChild(__tui_6)
 		if a.statusText(mgr.Instance().Name) == string(server.Running) {
-			__tui_8 := tui.New(
+			__tui_10 := tui.New(
 				tui.WithText(a.statusText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
 			)
-			__tui_5.AddChild(__tui_8)
+			__tui_5.AddChild(__tui_10)
 		} else if a.statusText(mgr.Instance().Name) == string(server.Stopping) {
-			__tui_9 := tui.New(
+			__tui_11 := tui.New(
 				tui.WithText(a.statusText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 			)
-			__tui_5.AddChild(__tui_9)
+			__tui_5.AddChild(__tui_11)
 		} else if a.statusText(mgr.Instance().Name) == string(server.Crashed) {
-			__tui_10 := tui.New(
+			__tui_12 := tui.New(
 				tui.WithText(a.statusText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red).Bold()),
 			)
-			__tui_5.AddChild(__tui_10)
+			__tui_5.AddChild(__tui_12)
 		} else {
-			__tui_11 := tui.New(
+			__tui_13 := tui.New(
 				tui.WithText(a.statusText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_5.AddChild(__tui_11)
+			__tui_5.AddChild(__tui_13)
 		}
 		__tui_4.AddChild(__tui_5)
 		if a.portText(mgr.Instance().Name) != "" {
-			__tui_12 := tui.New(
+			__tui_14 := tui.New(
 				tui.WithText(a.portText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_4.AddChild(__tui_12)
+			__tui_4.AddChild(__tui_14)
 		}
 		if a.metricText(mgr.Instance().Name) != "" {
-			__tui_13 := tui.New(
+			__tui_15 := tui.New(
 				tui.WithText(a.metricText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
-			__tui_4.AddChild(__tui_13)
+			__tui_4.AddChild(__tui_15)
 		}
 		if a.playersText(mgr.Instance().Name) != "" {
-			__tui_14 := tui.New(
+			__tui_16 := tui.New(
 				tui.WithText(a.playersText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
 			)
-			__tui_4.AddChild(__tui_14)
+			__tui_4.AddChild(__tui_16)
 		}
 		__tui_0.AddChild(__tui_4)
 	}
@@ -910,13 +922,23 @@ func (a *app) Render(app *tui.App) *tui.Element {
 				return JavaView(a)
 			})
 			__tui_6.AddChild(__tui_15)
+		} else if a.incOpen.Get() {
+			__tui_16 := app.Mount(a, 9, func() tui.Component {
+				return IncidentView(a)
+			})
+			__tui_6.AddChild(__tui_16)
+		} else if a.docOpen.Get() {
+			__tui_17 := app.Mount(a, 10, func() tui.Component {
+				return DoctorView(a)
+			})
+			__tui_6.AddChild(__tui_17)
 		} else {
-			__tui_16 := ConsoleView(a)
-			__tui_6.AddChild(__tui_16.Root)
+			__tui_18 := ConsoleView(a)
+			__tui_6.AddChild(__tui_18.Root)
 		}
 		__tui_2.AddChild(__tui_6)
-		__tui_17 := FooterBar(a)
-		__tui_2.AddChild(__tui_17.Root)
+		__tui_19 := FooterBar(a)
+		__tui_2.AddChild(__tui_19.Root)
 		if __tui_0 == nil {
 			__tui_0 = __tui_2
 		}

@@ -7,12 +7,15 @@ package main
 import (
 	"context"
 	"math"
+	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/doctor"
 	"github.com/JorMath/mc-tui-server/internal/download"
 	"github.com/JorMath/mc-tui-server/internal/hangar"
+	"github.com/JorMath/mc-tui-server/internal/incident"
 	"github.com/JorMath/mc-tui-server/internal/mcping"
 	"github.com/JorMath/mc-tui-server/internal/metrics"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
@@ -144,6 +147,13 @@ type app struct {
 	// periodic refresh and is only touched by the refresh timer.
 	ports     *tui.State[map[string]int]
 	portsTick int
+	// incidents caches whether each instance holds crash evidence, with the
+	// same convention as ports: the sidebar renders the cache and never
+	// touches crash-reports/ or logs/ itself. incidentTick gates the periodic
+	// refresh and is only touched by the refresh timer; onCrash fills the
+	// entry for a crash as soon as it is detected.
+	incidents    *tui.State[map[string]bool]
+	incidentTick int
 	// lastPIDs, crashTimes, pingTick, lastBackup y lastRestartDay solo se
 	// tocan desde el timer de refresh.
 	lastPIDs       map[string]int
@@ -315,6 +325,33 @@ type app struct {
 	plAdding *tui.State[bool]
 	plText   *tui.State[string]
 	plMsg    *tui.State[string]
+
+	// Incident panel (F5) opened with i: the last crash evidence of the
+	// selected instance. incGen invalidates the goroutines of a closed panel,
+	// equal to javaGen. incClient and incBaseURL are injected so a test can
+	// point the upload at an httptest server.
+	incOpen    *tui.State[bool]
+	incName    *tui.State[string]
+	incReport  *tui.State[incident.Report]
+	incFound   *tui.State[bool]
+	incBusy    *tui.State[bool]
+	incGen     *tui.State[int]
+	incConfirm *tui.State[bool]
+	incMsg     *tui.State[string]
+	incURL     *tui.State[string]
+	incScroll  *tui.State[int]
+	incClient  *http.Client
+	incBaseURL string
+
+	// Doctor panel (F5) opened with D: the pre-flight checks of the selected
+	// instance, re-runnable with r.
+	docOpen   *tui.State[bool]
+	docName   *tui.State[string]
+	docChecks *tui.State[[]doctor.Check]
+	docBusy   *tui.State[bool]
+	docGen    *tui.State[int]
+	docMsg    *tui.State[string]
+	docScroll *tui.State[int]
 }
 
 func App(store *config.Store, managers []*server.Manager) *app {
@@ -360,6 +397,7 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		samples:        newState(&reg, map[string]metrics.Sample{}),
 		pings:          newState(&reg, map[string]mcping.Status{}),
 		ports:          newState(&reg, instancePorts(store.Instances())),
+		incidents:      newState(&reg, instanceIncidents(store.Instances())),
 		lastPIDs:       map[string]int{},
 		crashTimes:     map[string][]time.Time{},
 		lastBackup:     map[string]time.Time{},
@@ -467,6 +505,27 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		javaGen:      newState(&reg, 0),
 		javaSysLabel: newState(&reg, ""),
 		javaManLabel: newState(&reg, ""),
+
+		incOpen:    newState(&reg, false),
+		incName:    newState(&reg, ""),
+		incReport:  newState(&reg, incident.Report{}),
+		incFound:   newState(&reg, false),
+		incBusy:    newState(&reg, false),
+		incGen:     newState(&reg, 0),
+		incConfirm: newState(&reg, false),
+		incMsg:     newState(&reg, ""),
+		incURL:     newState(&reg, ""),
+		incScroll:  newState(&reg, 0),
+		incClient:  http.DefaultClient,
+		incBaseURL: "",
+
+		docOpen:   newState(&reg, false),
+		docName:   newState(&reg, ""),
+		docChecks: newState(&reg, []doctor.Check{}),
+		docBusy:   newState(&reg, false),
+		docGen:    newState(&reg, 0),
+		docMsg:    newState(&reg, ""),
+		docScroll: newState(&reg, 0),
 	}
 	a.binders = reg
 	for _, m := range managers {
@@ -601,7 +660,8 @@ func (a *app) appendLog(name, line string) {
 func (a *app) mainHints() []hint {
 	return []hint{
 		{"↑/↓", "select"}, {"Enter", "actions"}, {"s/x/r", "lifecycle"},
-		{"c", "command"}, {"n", "new"}, {"?", "help"}, {"q", "quit"},
+		{"c", "command"}, {"n", "new"}, {"i", "incident"}, {"D", "doctor"},
+		{"?", "help"}, {"q", "quit"},
 	}
 }
 
@@ -627,6 +687,12 @@ func (a *app) KeyMap() tui.KeyMap {
 	}
 	if a.javaOpen.Get() {
 		return a.javaKeyMap()
+	}
+	if a.incOpen.Get() {
+		return a.incKeyMap()
+	}
+	if a.docOpen.Get() {
+		return a.docKeyMap()
 	}
 	if a.wizStep.Get() != wizOff {
 		return a.wizKeyMap()
@@ -671,6 +737,8 @@ func (a *app) KeyMap() tui.KeyMap {
 		tui.On(tui.Rune('c'), func(ke tui.KeyEvent) { a.cmdActive.Set(true) }),
 		tui.On(tui.KeyEnter, func(ke tui.KeyEvent) { a.openMenu() }),
 		tui.On(tui.Rune('n'), func(ke tui.KeyEvent) { a.wizOpen() }),
+		tui.On(tui.Rune('i'), func(ke tui.KeyEvent) { a.incOpenPanel() }),
+		tui.On(tui.Rune('D'), func(ke tui.KeyEvent) { a.docOpenPanel() }),
 		tui.On(tui.Rune('?'), func(ke tui.KeyEvent) { a.helpOpen.Set(true) }),
 		tui.On(tui.KeyUp, func(ke tui.KeyEvent) { a.moveSelection(-1) }),
 		tui.On(tui.KeyDown, func(ke tui.KeyEvent) { a.moveSelection(1) }),
