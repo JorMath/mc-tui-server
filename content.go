@@ -23,8 +23,11 @@ const (
 // contentItem is one search result. Either ID (Modrinth) or Owner/Slug
 // (Hangar) is set, depending on Source.
 type contentItem struct {
-	Source      string
-	ID          string
+	Source string
+	ID     string
+	// HangarID is the numeric Hangar project id, the canonical handle used
+	// for dependencies. It is zero for Modrinth rows.
+	HangarID    int
 	Owner       string
 	Slug        string
 	Title       string
@@ -49,8 +52,12 @@ type contentVersion struct {
 	ExternalURL string
 	// Deps are Modrinth dependencies, installed alongside the project.
 	Deps []modrinth.Dependency
-	// PluginDeps lists required Hangar plugin dependencies by name. They
-	// are reported in the UI but never installed automatically.
+	// HangarDeps are the plugin dependencies declared by a Hangar version.
+	// They are kept next to the display names so a version picked from the
+	// selector installs exactly the dependencies it declared.
+	HangarDeps []hangar.Dependency
+	// PluginDeps lists the required Hangar plugin dependencies by name,
+	// for the version row.
 	PluginDeps []string
 }
 
@@ -73,6 +80,7 @@ func contentItemFromModrinth(p modrinth.Project) contentItem {
 func contentItemFromHangar(p hangar.Project) contentItem {
 	return contentItem{
 		Source:      sourceHangar,
+		HangarID:    p.ID,
 		Owner:       p.Owner,
 		Slug:        p.Slug,
 		Title:       p.Name,
@@ -102,20 +110,40 @@ func contentVersionFromHangar(v hangar.Version) contentVersion {
 		File:         modrinth.File{URL: v.DownloadURL, Filename: v.FileName},
 		SHA256:       v.SHA256,
 		ExternalURL:  v.ExternalURL,
-		PluginDeps:   v.Dependencies,
+		HangarDeps:   v.Dependencies,
+		PluginDeps:   hangarDependencyNames(v.Dependencies),
 	}
+}
+
+// hangarDependencyNames lists the dependency names shown on a version row.
+// Required dependencies come first; externally hosted ones are marked
+// because they cannot be installed from Hangar.
+func hangarDependencyNames(deps []hangar.Dependency) []string {
+	var hosted, external []string
+	for _, d := range deps {
+		if !d.Required || d.Name == "" {
+			continue
+		}
+		if d.ExternalURL != "" {
+			external = append(external, d.Name+" (external)")
+			continue
+		}
+		hosted = append(hosted, d.Name)
+	}
+	return append(hosted, external...)
 }
 
 // toHangarVersion rebuilds the Hangar version needed to download a
 // contentVersion created by contentVersionFromHangar.
 func toHangarVersion(v contentVersion) hangar.Version {
 	return hangar.Version{
-		Name:        v.Label,
-		Channel:     v.Channel,
-		DownloadURL: v.File.URL,
-		FileName:    v.File.Filename,
-		SHA256:      v.SHA256,
-		ExternalURL: v.ExternalURL,
+		Name:         v.Label,
+		Channel:      v.Channel,
+		DownloadURL:  v.File.URL,
+		FileName:     v.File.Filename,
+		SHA256:       v.SHA256,
+		ExternalURL:  v.ExternalURL,
+		Dependencies: v.HangarDeps,
 	}
 }
 

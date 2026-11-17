@@ -60,9 +60,9 @@ func TestSearchParsesAndBuildsQuery(t *testing.T) {
 		gotLimit = r.URL.Query().Get("limit")
 		gotOffset = r.URL.Query().Get("offset")
 		fmt.Fprint(w, `{"pagination":{"count":2,"limit":25,"offset":0},"result":[
-			{"name":"ViaVersion","namespace":{"owner":"ViaVersion","slug":"ViaVersion"},
+			{"id":31,"name":"ViaVersion","namespace":{"owner":"ViaVersion","slug":"ViaVersion"},
 			 "description":"Protocol support","stats":{"downloads":531399}},
-			{"name":"EssentialsX","namespace":{"owner":"EssentialsX","slug":"EssentialsX"},
+			{"id":32,"name":"EssentialsX","namespace":{"owner":"EssentialsX","slug":"EssentialsX"},
 			 "description":"Core commands","stats":{"downloads":9000}}
 		]}`)
 	})
@@ -78,7 +78,7 @@ func TestSearchParsesAndBuildsQuery(t *testing.T) {
 		t.Fatalf("projects = %+v", projects)
 	}
 	first := projects[0]
-	if first.Name != "ViaVersion" || first.Owner != "ViaVersion" || first.Slug != "ViaVersion" ||
+	if first.ID != 31 || first.Name != "ViaVersion" || first.Owner != "ViaVersion" || first.Slug != "ViaVersion" ||
 		first.Description != "Protocol support" || first.Downloads != 531399 {
 		t.Fatalf("first project = %+v", first)
 	}
@@ -153,8 +153,8 @@ const versionBody = `{
 		   "sha256Hash":"5D0EAA"},"externalUrl":null,
 		   "downloadUrl":"https://hangarcdn.papermc.io/plugins/ViaVersion.jar"}},
 		 "pluginDependencies":{"PAPER":[
-		   {"name":"ViaBackwards","required":true},
-		   {"name":"ViaRewind","required":false}]},
+		   {"name":"ViaBackwards","projectId":12,"required":true,"externalUrl":null,"platform":"PAPER"},
+		   {"name":"ViaRewind","projectId":112,"required":false,"externalUrl":null,"platform":"PAPER"}]},
 		 "platformDependencies":{"PAPER":["1.8","1.21.8","26.3"]},
 		 "platformDependenciesFormatted":{"PAPER":["1.8-26.3"]}},
 		{"name":"5.12.1","channel":{"name":"Release"},
@@ -205,8 +205,14 @@ func TestVersionsParsesAndFilters(t *testing.T) {
 	if len(v.GameVersions) != 3 || v.GameRange != "1.8-26.3" {
 		t.Fatalf("game versions = %v, range = %q", v.GameVersions, v.GameRange)
 	}
-	if len(v.Dependencies) != 1 || v.Dependencies[0] != "ViaBackwards" {
-		t.Fatalf("dependencies = %v, only required ones are reported", v.Dependencies)
+	if len(v.Dependencies) != 2 {
+		t.Fatalf("dependencies = %+v, required and optional ones are both kept", v.Dependencies)
+	}
+	if d := v.Dependencies[0]; d.ProjectID != 12 || d.Name != "ViaBackwards" || !d.Required || d.ExternalURL != "" {
+		t.Fatalf("required dependency = %+v", d)
+	}
+	if d := v.Dependencies[1]; d.ProjectID != 112 || d.Name != "ViaRewind" || d.Required {
+		t.Fatalf("optional dependency = %+v", d)
 	}
 }
 
@@ -270,6 +276,163 @@ func TestVersionsMalformedJSON(t *testing.T) {
 	c := &Client{BaseURL: srv.URL}
 	if _, err := c.Versions(ctx(), "o", "s", "PAPER", "", ""); err == nil {
 		t.Fatal("Versions should fail on malformed JSON")
+	}
+}
+
+func TestVersionsParsesExternalDependency(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects/o/s/versions" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"result":[{"name":"1.0","channel":{"name":"Release"},
+			"downloads":{"PAPER":{"fileInfo":{"name":"p.jar","sha256Hash":"aa"},
+			  "downloadUrl":"https://example.invalid/p.jar"}},
+			"pluginDependencies":{"PAPER":[
+			  {"name":"Outside","projectId":0,"required":true,"externalUrl":"https://outside.invalid/x.jar"},
+			  {"name":"Inside","projectId":7,"required":true,"externalUrl":null}]}}]}`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	vers, err := c.Versions(ctx(), "o", "s", "PAPER", "", "Release")
+	if err != nil {
+		t.Fatalf("Versions: %v", err)
+	}
+	if len(vers) != 1 || len(vers[0].Dependencies) != 2 {
+		t.Fatalf("versions = %+v", vers)
+	}
+	deps := vers[0].Dependencies
+	if deps[0].ProjectID != 0 || deps[0].ExternalURL != "https://outside.invalid/x.jar" || !deps[0].Required {
+		t.Fatalf("external dependency = %+v", deps[0])
+	}
+	if deps[1].ProjectID != 7 || deps[1].ExternalURL != "" || deps[1].Name != "Inside" {
+		t.Fatalf("hosted dependency = %+v", deps[1])
+	}
+}
+
+func TestProjectByID(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects/12" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"id":12,"name":"ViaBackwards","namespace":{"owner":"ViaVersion","slug":"ViaBackwards"},
+			"description":"Backwards compatibility","stats":{"downloads":42}}`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	p, err := c.ProjectByID(ctx(), 12)
+	if err != nil {
+		t.Fatalf("ProjectByID: %v", err)
+	}
+	if p.ID != 12 || p.Name != "ViaBackwards" || p.Owner != "ViaVersion" ||
+		p.Slug != "ViaBackwards" || p.Description != "Backwards compatibility" || p.Downloads != 42 {
+		t.Fatalf("project = %+v", p)
+	}
+}
+
+func TestProjectByIDRequiresPositiveID(t *testing.T) {
+	c := &Client{BaseURL: "http://x"}
+	if _, err := c.ProjectByID(ctx(), 0); err == nil {
+		t.Fatal("ProjectByID without an id should fail")
+	}
+}
+
+func TestProjectByIDHTTPError(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprint(w, `{"error":"unknown project"}`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	_, err := c.ProjectByID(ctx(), 999)
+	if err == nil || !strings.Contains(err.Error(), "HTTP 404") || !strings.Contains(err.Error(), "unknown project") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestProjectByIDMalformedJSON(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"name":`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	if _, err := c.ProjectByID(ctx(), 1); err == nil {
+		t.Fatal("ProjectByID should fail on malformed JSON")
+	}
+}
+
+func TestLatestVersionByIDFound(t *testing.T) {
+	var gotPath string
+	var gotPlatform, gotVersion, gotChannel, gotLimit string
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		q := r.URL.Query()
+		gotPlatform = q.Get("platform")
+		gotVersion = q.Get("platformVersion")
+		gotChannel = q.Get("channel")
+		gotLimit = q.Get("limit")
+		fmt.Fprint(w, `{"result":[{"name":"4.2.0","channel":{"name":"Release"},
+			"downloads":{"PAPER":{"fileInfo":{"name":"ViaRewind-4.2.0.jar","sha256Hash":"AB"},
+			  "downloadUrl":"https://example.invalid/vr.jar"}},
+			"pluginDependencies":{"PAPER":[
+			  {"name":"ViaBackwards","projectId":12,"required":true},
+			  {"name":"ViaVersion","projectId":31,"required":true}]}}]}`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	v, found, err := c.LatestVersionByID(ctx(), 112, "PAPER", "26.3", "Release")
+	if err != nil {
+		t.Fatalf("LatestVersionByID: %v", err)
+	}
+	if !found {
+		t.Fatal("found should be true when the project publishes a version")
+	}
+	if gotPath != "/api/v1/projects/112/versions" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotPlatform != "PAPER" || gotVersion != "26.3" || gotChannel != "Release" || gotLimit != "1" {
+		t.Fatalf("query params = %q/%q/%q limit=%q", gotPlatform, gotVersion, gotChannel, gotLimit)
+	}
+	if v.Name != "4.2.0" || v.FileName != "ViaRewind-4.2.0.jar" || v.SHA256 != "AB" ||
+		v.DownloadURL != "https://example.invalid/vr.jar" {
+		t.Fatalf("version = %+v", v)
+	}
+	if len(v.Dependencies) != 2 || v.Dependencies[0].ProjectID != 12 || v.Dependencies[1].ProjectID != 31 {
+		t.Fatalf("dependencies = %+v", v.Dependencies)
+	}
+}
+
+func TestLatestVersionByIDEmptyResult(t *testing.T) {
+	var channelPresent bool
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		_, channelPresent = r.URL.Query()["channel"]
+		fmt.Fprint(w, `{"result":[]}`)
+	})
+	c := &Client{BaseURL: srv.URL}
+	v, found, err := c.LatestVersionByID(ctx(), 7, "PAPER", "26.3", "")
+	if err != nil {
+		t.Fatalf("an empty result is a normal answer, got %v", err)
+	}
+	if found || v.Name != "" {
+		t.Fatalf("version = %+v, found = %v", v, found)
+	}
+	if channelPresent {
+		t.Fatal("an empty channel filter must be omitted")
+	}
+}
+
+func TestLatestVersionByIDHTTPError(t *testing.T) {
+	srv := serve(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})
+	c := &Client{BaseURL: srv.URL}
+	_, found, err := c.LatestVersionByID(ctx(), 7, "PAPER", "26.3", "Release")
+	if err == nil || !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("error = %v", err)
+	}
+	if found {
+		t.Fatal("a failed lookup must report found = false")
+	}
+}
+
+func TestLatestVersionByIDRequiresPositiveID(t *testing.T) {
+	c := &Client{BaseURL: "http://x"}
+	if _, _, err := c.LatestVersionByID(ctx(), 0, "PAPER", "", ""); err == nil {
+		t.Fatal("LatestVersionByID without an id should fail")
 	}
 }
 

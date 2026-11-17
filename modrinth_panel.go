@@ -396,9 +396,19 @@ func (a *app) mrInstallHangar(project contentItem) {
 		if a.mrGen.Get() != gen {
 			return
 		}
+		root := depRef{Key: hangarRefKey(project.HangarID), Name: project.Title}
+		installed := a.installDepGraph(ctx, gen, inst, sub, root,
+			a.hangarResolver(inst, platform, "Release", root, v), a.hangarDownloader())
+		if a.mrGen.Get() != gen {
+			return
+		}
 		a.mrBusy.Set(false)
-		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", v.FileName, sub))
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, v.FileName))
+		suffix := ""
+		if installed > 0 {
+			suffix = fmt.Sprintf(" (+%d dependencies)", installed)
+		}
+		a.mrMsg.Set(fmt.Sprintf("Installed %s%s into %s/ · restart the server to load it", v.FileName, suffix, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)%s", project.Title, v.FileName, suffix))
 	}()
 }
 
@@ -585,14 +595,22 @@ func (a *app) mrInstallVersion() {
 }
 
 // mrInstallHangarVersion downloads the selected Hangar version into the
-// plugin directory. External versions install nothing and only report their
-// page URL.
+// plugin directory, then installs its required dependencies. External
+// versions install nothing and only report their page URL.
 func (a *app) mrInstallHangarVersion(inst config.Instance, sub string, project contentItem, chosen contentVersion) {
 	v := toHangarVersion(chosen)
 	if v.External() {
 		a.mrVerMode.Set(false)
 		a.mrMsg.Set(externalMessage(v))
 		return
+	}
+	platform, ok := hangar.Platform(inst.Type)
+	if !ok {
+		return
+	}
+	channel := "Release"
+	if a.mrSnapshot.Get() {
+		channel = "Snapshot"
 	}
 	gen := a.mrGen.Get()
 	a.mrVerMode.Set(false)
@@ -613,9 +631,19 @@ func (a *app) mrInstallHangarVersion(inst config.Instance, sub string, project c
 		if a.mrGen.Get() != gen {
 			return
 		}
+		root := depRef{Key: hangarRefKey(project.HangarID), Name: project.Title}
+		installed := a.installDepGraph(ctx, gen, inst, sub, root,
+			a.hangarResolver(inst, platform, channel, root, v), a.hangarDownloader())
+		if a.mrGen.Get() != gen {
+			return
+		}
 		a.mrBusy.Set(false)
-		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", v.FileName, sub))
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, v.FileName))
+		suffix := ""
+		if installed > 0 {
+			suffix = fmt.Sprintf(" (+%d dependencies)", installed)
+		}
+		a.mrMsg.Set(fmt.Sprintf("Installed %s%s into %s/ · restart the server to load it", v.FileName, suffix, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)%s", project.Title, v.FileName, suffix))
 	}()
 }
 
@@ -624,47 +652,112 @@ func (a *app) mrInstallHangarVersion(inst config.Instance, sub string, project c
 // los proyectos solo-cliente y los archivos que ya están en la carpeta.
 // Devuelve cuántas instaló. Corre dentro de la goroutine de mrInstall.
 func (a *app) mrInstallDeps(ctx context.Context, gen int, inst config.Instance, sub, rootID string, deps []modrinth.Dependency) int {
-	queue := []string{}
-	visited := map[string]bool{rootID: true}
-	enqueue := func(list []modrinth.Dependency) {
+	root := depRef{Key: rootID, Name: rootID}
+	// requiredRefs keeps only the required, resolvable Modrinth edges.
+	requiredRefs := func(list []modrinth.Dependency) []depRef {
+		refs := make([]depRef, 0, len(list))
 		for _, d := range list {
-			if d.Type == "required" && d.ProjectID != "" && !visited[d.ProjectID] {
-				visited[d.ProjectID] = true
-				queue = append(queue, d.ProjectID)
+			if d.Type != "required" || d.ProjectID == "" {
+				continue
 			}
+			refs = append(refs, depRef{Key: d.ProjectID, Name: d.ProjectID})
 		}
+		return refs
 	}
-	enqueue(deps)
-	installed := 0
-	// Tope defensivo: ningún árbol de dependencias razonable pasa de 25.
-	for len(queue) > 0 && len(visited) <= 25 {
-		id := queue[0]
-		queue = queue[1:]
-		if a.mrGen.Get() != gen {
-			return installed
+	resolve := func(ctx context.Context, ref depRef) (depNode, error) {
+		if ref.Key == root.Key {
+			return depNode{Deps: requiredRefs(deps)}, nil
 		}
-		if unsupported, err := a.mr.ServerUnsupported(ctx, []string{id}); err == nil && unsupported[id] {
-			continue
+		if unsupported, err := a.mr.ServerUnsupported(ctx, []string{ref.Key}); err == nil && unsupported[ref.Key] {
+			return depNode{}, fmt.Errorf("project %s is not available for a server", ref.Key)
 		}
-		file, subDeps, err := a.mr.LatestFileWithDeps(ctx, id, inst.Type, inst.Version)
+		file, subDeps, err := a.mr.LatestFileWithDeps(ctx, ref.Key, inst.Type, inst.Version)
 		if err != nil {
-			a.appendLog(inst.Name, "[mc-tui] Skipped a dependency: "+err.Error())
-			continue
+			return depNode{}, err
 		}
-		enqueue(subDeps)
-		dest := filepath.Join(inst.Dir, sub, file.Filename)
-		if _, err := os.Stat(dest); err == nil {
-			continue // ya instalada
-		}
-		a.mrMsg.Set(fmt.Sprintf("Installing dependency %s...", file.Filename))
-		if err := download.DownloadFile(ctx, nil, file.URL, dest, nil); err != nil {
-			a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Dependency %s failed: %s", file.Filename, err))
-			continue
-		}
-		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed dependency %s", file.Filename))
-		installed++
+		return depNode{
+			Filename: file.Filename,
+			URL:      file.URL,
+			Version:  file.VersionNumber,
+			Deps:     requiredRefs(subDeps),
+		}, nil
 	}
-	return installed
+	downloadNode := func(ctx context.Context, node depNode, dest string) error {
+		a.mrMsg.Set(fmt.Sprintf("Installing dependency %s...", node.Filename))
+		return download.DownloadFile(ctx, nil, node.URL, dest, nil)
+	}
+	return a.installDepGraph(ctx, gen, inst, sub, root, resolve, downloadNode)
+}
+
+// hangarRefKey is the source-scoped key of a Hangar project in the
+// dependency graph.
+func hangarRefKey(projectID int) string {
+	return fmt.Sprintf("hangar:%d", projectID)
+}
+
+// requiredHangarRefs converts the dependencies declared by a version into
+// graph refs. Only required dependencies hosted on Hangar are followed;
+// optional and external ones cannot be installed automatically.
+func requiredHangarRefs(deps []hangar.Dependency) []depRef {
+	refs := make([]depRef, 0, len(deps))
+	for _, d := range deps {
+		if !d.Required || d.ExternalURL != "" || d.ProjectID <= 0 {
+			continue
+		}
+		name := d.Name
+		if name == "" {
+			name = fmt.Sprintf("project %d", d.ProjectID)
+		}
+		refs = append(refs, depRef{Key: hangarRefKey(d.ProjectID), Name: name})
+	}
+	return refs
+}
+
+// hangarResolver resolves a Hangar dependency to its newest version for the
+// instance's Minecraft version and the given channel. rootVersion is the
+// version already downloaded, answered from memory.
+func (a *app) hangarResolver(inst config.Instance, platform, channel string, root depRef, rootVersion hangar.Version) depResolver {
+	return func(ctx context.Context, ref depRef) (depNode, error) {
+		if ref.Key == root.Key {
+			return depNode{Version: rootVersion.Name, Deps: requiredHangarRefs(rootVersion.Dependencies)}, nil
+		}
+		id, err := strconv.Atoi(strings.TrimPrefix(ref.Key, "hangar:"))
+		if err != nil || id <= 0 {
+			return depNode{}, fmt.Errorf("invalid Hangar project id %q", ref.Key)
+		}
+		v, found, err := a.hangar.LatestVersionByID(ctx, id, platform, inst.Version, channel)
+		if err != nil {
+			return depNode{}, err
+		}
+		if !found {
+			return depNode{}, fmt.Errorf("no %s version supports %s", channel, inst.Version)
+		}
+		node := depNode{
+			Filename: v.FileName,
+			URL:      v.DownloadURL,
+			SHA256:   v.SHA256,
+			Version:  v.Name,
+			Deps:     requiredHangarRefs(v.Dependencies),
+		}
+		if v.External() {
+			node.External = v.ExternalURL
+		}
+		return node, nil
+	}
+}
+
+// hangarDownloader downloads a resolved Hangar node, verifying the SHA-256
+// published by the API.
+func (a *app) hangarDownloader() depDownloader {
+	return func(ctx context.Context, node depNode, dest string) error {
+		a.mrMsg.Set(fmt.Sprintf("Installing dependency %s...", node.Filename))
+		return a.hangar.Download(ctx, hangar.Version{
+			Name:        node.Version,
+			DownloadURL: node.URL,
+			FileName:    node.Filename,
+			SHA256:      node.SHA256,
+		}, dest)
+	}
 }
 
 // hashesOf computes the SHA-1 and SHA-256 of a file in one read. Both are

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -112,7 +113,11 @@ func TestContentVersionFromHangar(t *testing.T) {
 		SHA256:       "ABCDEF",
 		GameVersions: []string{"1.20", "1.21", "1.22", "1.23", "1.24"},
 		GameRange:    "1.20-1.24",
-		Dependencies: []string{"Vault"},
+		Dependencies: []hangar.Dependency{
+			{ProjectID: 5, Name: "Vault", Required: true},
+			{ProjectID: 6, Name: "Optional", Required: false},
+			{ProjectID: 0, Name: "Outside", Required: true, ExternalURL: "https://outside.invalid/x.jar"},
+		},
 	}
 
 	cv := contentVersionFromHangar(hv)
@@ -122,8 +127,15 @@ func TestContentVersionFromHangar(t *testing.T) {
 	if cv.File.URL != hv.DownloadURL || cv.File.Filename != hv.FileName {
 		t.Fatalf("file = %+v, want URL/filename from Hangar", cv.File)
 	}
-	if cv.SHA256 != hv.SHA256 || len(cv.PluginDeps) != 1 || cv.PluginDeps[0] != "Vault" {
-		t.Fatalf("hash/deps = %q/%v", cv.SHA256, cv.PluginDeps)
+	if cv.SHA256 != hv.SHA256 {
+		t.Fatalf("hash = %q", cv.SHA256)
+	}
+	// The row lists required dependencies, marking the external one.
+	if got, want := strings.Join(cv.PluginDeps, ","), "Vault,Outside (external)"; got != want {
+		t.Fatalf("plugin deps = %q, want %q", got, want)
+	}
+	if len(cv.HangarDeps) != len(hv.Dependencies) {
+		t.Fatalf("hangar deps = %+v, want every declared dependency", cv.HangarDeps)
 	}
 	if cv.external() {
 		t.Fatal("a Hangar download URL is not external")
@@ -136,6 +148,9 @@ func TestContentVersionFromHangar(t *testing.T) {
 	if back.Name != hv.Name || back.Channel != hv.Channel || back.DownloadURL != hv.DownloadURL ||
 		back.FileName != hv.FileName || back.SHA256 != hv.SHA256 {
 		t.Fatalf("roundtrip = %+v, want %+v", back, hv)
+	}
+	if len(back.Dependencies) != len(hv.Dependencies) || back.Dependencies[0].ProjectID != 5 {
+		t.Fatalf("roundtrip dependencies = %+v, want %+v", back.Dependencies, hv.Dependencies)
 	}
 }
 
@@ -451,4 +466,163 @@ func sha1Hex(b []byte) string {
 func sha256Hex(b []byte) string {
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// fakeHangarDep is one pluginDependencies entry served to the install path.
+type fakeHangarDep struct {
+	name      string
+	projectID int
+	required  bool
+	external  string
+}
+
+// fakeHangarVersionFile is one version served by the fake install server.
+type fakeHangarVersionFile struct {
+	name     string
+	file     string
+	external string
+	deps     []fakeHangarDep
+}
+
+// fakeHangarInstall serves the three endpoints a Hangar install touches:
+// versions by owner/slug, versions by numeric id and the jar files.
+type fakeHangarInstall struct {
+	root  fakeHangarVersionFile
+	deps  map[int]fakeHangarVersionFile
+	files map[string][]byte
+	base  string
+}
+
+func (f *fakeHangarInstall) writeVersion(t *testing.T, w http.ResponseWriter, v fakeHangarVersionFile) {
+	t.Helper()
+	downloads := map[string]any{
+		"fileInfo": map[string]any{"name": v.file, "sha256Hash": sha256Hex(f.files[v.file])},
+	}
+	if v.external != "" {
+		downloads["externalUrl"] = v.external
+	} else {
+		downloads["downloadUrl"] = f.base + "/files/" + v.file
+	}
+	deps := make([]any, 0, len(v.deps))
+	for _, d := range v.deps {
+		entry := map[string]any{
+			"name":        d.name,
+			"projectId":   d.projectID,
+			"required":    d.required,
+			"externalUrl": nil,
+		}
+		if d.external != "" {
+			entry["externalUrl"] = d.external
+		}
+		deps = append(deps, entry)
+	}
+	writeJSON(t, w, map[string]any{
+		"result": []any{map[string]any{
+			"name":                 v.name,
+			"channel":              map[string]any{"name": "Release"},
+			"downloads":            map[string]any{"PAPER": downloads},
+			"pluginDependencies":   map[string]any{"PAPER": deps},
+			"platformDependencies": map[string]any{"PAPER": []string{"1.21.7"}},
+		}},
+	})
+}
+
+func newHangarInstallServer(t *testing.T, f *fakeHangarInstall) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/projects/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/v1/projects/"), "/")
+		switch {
+		case len(parts) == 2 && parts[1] == "versions":
+			id, err := strconv.Atoi(parts[0])
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			v, ok := f.deps[id]
+			if !ok {
+				_, _ = w.Write([]byte(`{"result":[]}`))
+				return
+			}
+			f.writeVersion(t, w, v)
+		case len(parts) == 3 && parts[2] == "versions":
+			f.writeVersion(t, w, f.root)
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	mux.HandleFunc("/files/", func(w http.ResponseWriter, r *http.Request) {
+		body, ok := f.files[strings.TrimPrefix(r.URL.Path, "/files/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(body)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	f.base = srv.URL
+	return srv
+}
+
+func TestMrInstallHangarInstallsRequiredDependencies(t *testing.T) {
+	files := map[string][]byte{
+		"root.jar":     []byte("root jar"),
+		"dep-a.jar":    []byte("dependency a"),
+		"dep-b.jar":    []byte("dependency b"),
+		"optional.jar": []byte("optional dependency"),
+	}
+	fake := &fakeHangarInstall{
+		files: files,
+		root: fakeHangarVersionFile{name: "1.0.0", file: "root.jar", deps: []fakeHangarDep{
+			{name: "DepA", projectID: 2, required: true},
+			{name: "DepB", projectID: 3, required: true},
+			{name: "ExternalDep", projectID: 4, required: true},
+			{name: "OptionalDep", projectID: 5, required: false},
+		}},
+		deps: map[int]fakeHangarVersionFile{
+			2: {name: "2.0.0", file: "dep-a.jar"},
+			3: {name: "2.1.0", file: "dep-b.jar"},
+			4: {name: "3.0.0", file: "external.jar", external: "https://outside.invalid/external.jar"},
+			5: {name: "1.0.0", file: "optional.jar"},
+		},
+	}
+	srv := newHangarInstallServer(t, fake)
+	a, inst, _ := newJavaApp(t)
+	a.hangar = &hangar.Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	a.mrKind.Set("plugins")
+	a.mrResults.Set([]contentItem{{
+		Source: sourceHangar, HangarID: 1, Owner: "Acme", Slug: "root", Title: "Root",
+	}})
+	a.mrIdx.Set(0)
+
+	a.mrInstall()
+	waitMrIdle(t, a)
+
+	dir := filepath.Join(inst.Dir, "plugins")
+	for _, name := range []string{"root.jar", "dep-a.jar", "dep-b.jar"} {
+		got, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if string(got) != string(files[name]) {
+			t.Fatalf("%s content = %q, want %q", name, got, files[name])
+		}
+	}
+	for _, name := range []string{"external.jar", "optional.jar"} {
+		if _, err := os.Stat(filepath.Join(dir, name)); !os.IsNotExist(err) {
+			t.Fatalf("%s must not be installed (external or optional), stat err = %v", name, err)
+		}
+	}
+	want := "Installed root.jar (+2 dependencies) into plugins/ · restart the server to load it"
+	if got := a.mrMsg.Get(); got != want {
+		t.Fatalf("message = %q, want %q", got, want)
+	}
+	logs := strings.Join(a.logs.Get()[inst.Name], "\n")
+	if !strings.Contains(logs, "Skipped dependency ExternalDep: hosted externally (https://outside.invalid/external.jar)") {
+		t.Fatalf("log = %q, want the external dependency reported", logs)
+	}
+	if strings.Contains(logs, "optional.jar") {
+		t.Fatalf("log = %q, an optional dependency must not be followed", logs)
+	}
 }
