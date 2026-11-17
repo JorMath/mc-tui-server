@@ -370,49 +370,82 @@ func WizardView(a *app) *WizardViewView {
 		__tui_48.AddChild(__tui_51)
 		__tui_0.AddChild(__tui_48)
 	}
-	if a.wizStep.Get() == wizEula {
+	if a.wizStep.Get() == wizPort {
 		__tui_52 := tui.New(
+			tui.WithDisplay(tui.DisplayFlex), tui.WithDirection(tui.Row),
+			tui.WithGap(1),
+		)
+		__tui_53 := tui.New(
+			tui.WithText("Port:"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Bold()),
+		)
+		__tui_52.AddChild(__tui_53)
+		__tui_54 := tui.New(
+			tui.WithText(a.wizPort.Get()),
+		)
+		__tui_52.AddChild(__tui_54)
+		__tui_55 := tui.New(
+			tui.WithText("_"),
+			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan).Blink()),
+		)
+		__tui_52.AddChild(__tui_55)
+		__tui_0.AddChild(__tui_52)
+		__tui_56 := tui.New(
+			tui.WithText("The TCP port the server binds"),
+			tui.WithTextStyle(tui.NewStyle().Dim()),
+		)
+		__tui_0.AddChild(__tui_56)
+		if a.wizMsg.Get() != "" {
+			__tui_57 := tui.New(
+				tui.WithText(a.wizMsg.Get()),
+				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
+			)
+			__tui_0.AddChild(__tui_57)
+		}
+	}
+	if a.wizStep.Get() == wizEula {
+		__tui_58 := tui.New(
 			tui.WithText("To run the server you must accept the Minecraft EULA:"),
 		)
-		__tui_0.AddChild(__tui_52)
-		__tui_53 := tui.New(
+		__tui_0.AddChild(__tui_58)
+		__tui_59 := tui.New(
 			tui.WithText("https://aka.ms/MinecraftEULA"),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Cyan)),
 		)
-		__tui_0.AddChild(__tui_53)
-		__tui_54 := tui.New(
+		__tui_0.AddChild(__tui_59)
+		__tui_60 := tui.New(
 			tui.WithText("Do you accept?"),
 			tui.WithTextStyle(tui.NewStyle().Bold()),
 		)
-		__tui_0.AddChild(__tui_54)
+		__tui_0.AddChild(__tui_60)
 	}
 	if a.wizStep.Get() == wizDownload {
-		__tui_55 := tui.New(
+		__tui_61 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Yellow)),
 		)
-		__tui_0.AddChild(__tui_55)
+		__tui_0.AddChild(__tui_61)
 	}
 	if a.wizStep.Get() == wizError {
-		__tui_56 := tui.New(
+		__tui_62 := tui.New(
 			tui.WithText(a.wizMsg.Get()),
 			tui.WithTextStyle(tui.NewStyle().Foreground(tui.Red)),
 		)
-		__tui_0.AddChild(__tui_56)
+		__tui_0.AddChild(__tui_62)
 	}
-	__tui_57 := HintsRow(a.wizHints(), false)
-	__tui_0.AddChild(__tui_57.Root)
+	__tui_63 := HintsRow(a.wizHints(), false)
+	__tui_0.AddChild(__tui_63.Root)
 
-	watchers = append(watchers, __tui_57.GetWatchers()...)
+	watchers = append(watchers, __tui_63.GetWatchers()...)
 
 	__bindApp := func(app *tui.App) {
-		if binder, ok := any(__tui_57).(tui.AppBinder); ok {
+		if binder, ok := any(__tui_63).(tui.AppBinder); ok {
 			binder.BindApp(app)
 		}
 	}
 
 	__unbindApp := func() {
-		if unbinder, ok := any(__tui_57).(tui.AppUnbinder); ok {
+		if unbinder, ok := any(__tui_63).(tui.AppUnbinder); ok {
 			unbinder.UnbindApp()
 		}
 	}

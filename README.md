@@ -14,6 +14,11 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   auto-restart enabled per instance (`Enter` → actions menu → Auto-restart),
   the server restarts itself after 5s — giving up after 3 crashes in
   10 minutes.
+- **Ports** — new instances get the first free TCP port from 25565; ports
+  already declared by another instance are skipped even when that server is
+  stopped, and the chosen port is written to `server.properties`. The sidebar
+  shows each instance's port under its name (`:25565`), and the properties
+  editor rejects a port that is busy or assigned to another instance.
 - **Java runtime** — starting a server checks that your Java is new enough
   for the instance's Minecraft version. If it isn't, open the actions menu
   (`Enter`) and choose Java runtime to pick a runtime per instance: the
@@ -162,7 +167,7 @@ mc-tui-server -version   # print the version and exit
 | `Enter` | open the actions menu for the selected instance |
 | `s` / `x` / `r` | start / stop / restart |
 | `c` | command bar (send commands to the server) |
-| `n` | new instance wizard (type → version → name → memory → Java when needed → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
+| `n` | new instance wizard (type → version → Java when needed → name → memory → port → EULA); pick `modpack (Modrinth)` to install a modpack (Fabric/Forge/NeoForge/Quilt) |
 | `PgUp/PgDn · End` | scroll the console / follow the live log |
 | `?` | help overlay with every shortcut |
 | `q` | quit (running servers are stopped gracefully) |

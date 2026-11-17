@@ -135,6 +135,15 @@ type app struct {
 	samples   *tui.State[map[string]metrics.Sample]
 	// pings guarda el server-list-ping de las instancias corriendo.
 	pings *tui.State[map[string]mcping.Status]
+	// ports caches the TCP port each instance declares in its
+	// server.properties. Rendering must never read that file: every console
+	// line triggers a render, so a busy server would turn the sidebar into
+	// dozens of file reads per second. The cache is refreshed from the
+	// refresh timer (see the convention below) and right after a port is
+	// written by the wizard or the properties editor. portsTick gates the
+	// periodic refresh and is only touched by the refresh timer.
+	ports     *tui.State[map[string]int]
+	portsTick int
 	// lastPIDs, crashTimes, pingTick, lastBackup y lastRestartDay solo se
 	// tocan desde el timer de refresh.
 	lastPIDs       map[string]int
@@ -152,7 +161,11 @@ type app struct {
 	wizVerIdx   *tui.State[int]
 	wizName     *tui.State[string]
 	wizMemory   *tui.State[string]
-	wizMsg      *tui.State[string]
+	// wizPort is the TCP port step: the value being typed plus the
+	// suggestion used when the field is empty.
+	wizPort        *tui.State[string]
+	wizPortDefault *tui.State[int]
+	wizMsg         *tui.State[string]
 
 	// Flujo de modpacks de Modrinth dentro del asistente (v0.1.2).
 	wizPackQuery  *tui.State[string]
@@ -187,20 +200,23 @@ type app struct {
 
 	// Panel de archivos (R3). fmProps se muta fuera de un State; fmRev
 	// se incrementa tras cada mutación para forzar el re-render.
-	fmOpen      *tui.State[bool]
-	fmTab       *tui.State[int]
-	fmProps     *properties.File
-	fmRev       *tui.State[int]
-	fmPropsIdx  *tui.State[int]
-	fmEditing   *tui.State[bool]
-	fmEditText  *tui.State[string]
-	fmDirty     *tui.State[bool]
-	fmWorlds    *tui.State[[]string]
-	fmPlugins   *tui.State[[]string]
-	fmWorldIdx  *tui.State[int]
-	fmPluginIdx *tui.State[int]
-	fmConfirm   *tui.State[string]
-	fmMsg       *tui.State[string]
+	fmOpen     *tui.State[bool]
+	fmTab      *tui.State[int]
+	fmProps    *properties.File
+	fmRev      *tui.State[int]
+	fmPropsIdx *tui.State[int]
+	fmEditing  *tui.State[bool]
+	fmEditText *tui.State[string]
+	fmDirty    *tui.State[bool]
+	// fmPortEdited records that server-port was edited in this session, so
+	// saving any other key never rejects a pre-existing port conflict.
+	fmPortEdited *tui.State[bool]
+	fmWorlds     *tui.State[[]string]
+	fmPlugins    *tui.State[[]string]
+	fmWorldIdx   *tui.State[int]
+	fmPluginIdx  *tui.State[int]
+	fmConfirm    *tui.State[string]
+	fmMsg        *tui.State[string]
 	// Backups de mundos (v0.2.0). fmRestore guarda el zip pendiente de
 	// confirmar restauración ("" = sin diálogo).
 	fmBackups   *tui.State[[]string]
@@ -343,19 +359,22 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		collector:      metrics.NewCollector(),
 		samples:        newState(&reg, map[string]metrics.Sample{}),
 		pings:          newState(&reg, map[string]mcping.Status{}),
+		ports:          newState(&reg, instancePorts(store.Instances())),
 		lastPIDs:       map[string]int{},
 		crashTimes:     map[string][]time.Time{},
 		lastBackup:     map[string]time.Time{},
 		lastRestartDay: map[string]string{},
 
-		wizStep:     newState(&reg, wizOff),
-		wizGen:      newState(&reg, 0),
-		wizTypeIdx:  newState(&reg, 0),
-		wizVersions: newState(&reg, []string{}),
-		wizVerIdx:   newState(&reg, 0),
-		wizName:     newState(&reg, ""),
-		wizMemory:   newState(&reg, ""),
-		wizMsg:      newState(&reg, ""),
+		wizStep:        newState(&reg, wizOff),
+		wizGen:         newState(&reg, 0),
+		wizTypeIdx:     newState(&reg, 0),
+		wizVersions:    newState(&reg, []string{}),
+		wizVerIdx:      newState(&reg, 0),
+		wizName:        newState(&reg, ""),
+		wizMemory:      newState(&reg, ""),
+		wizPort:        newState(&reg, ""),
+		wizPortDefault: newState(&reg, 0),
+		wizMsg:         newState(&reg, ""),
 
 		wizPackQuery:  newState(&reg, ""),
 		wizPacks:      newState(&reg, []modrinth.Project{}),
@@ -374,28 +393,29 @@ func App(store *config.Store, managers []*server.Manager) *app {
 		wizJavaMsg:      newState(&reg, ""),
 		wizJavaBusy:     newState(&reg, false),
 
-		fmOpen:      newState(&reg, false),
-		fmTab:       newState(&reg, 0),
-		fmProps:     &properties.File{},
-		fmRev:       newState(&reg, 0),
-		fmPropsIdx:  newState(&reg, 0),
-		fmEditing:   newState(&reg, false),
-		fmEditText:  newState(&reg, ""),
-		fmDirty:     newState(&reg, false),
-		fmWorlds:    newState(&reg, []string{}),
-		fmPlugins:   newState(&reg, []string{}),
-		fmWorldIdx:  newState(&reg, 0),
-		fmPluginIdx: newState(&reg, 0),
-		fmConfirm:   newState(&reg, ""),
-		fmMsg:       newState(&reg, ""),
-		fmBackups:   newState(&reg, []string{}),
-		fmBackupIdx: newState(&reg, 0),
-		fmRestore:   newState(&reg, ""),
-		fmLogs:      newState(&reg, []string{}),
-		fmLogIdx:    newState(&reg, 0),
-		fmLogView:   newState(&reg, false),
-		fmLogLines:  newState(&reg, []string{}),
-		fmLogScroll: newState(&reg, 0),
+		fmOpen:       newState(&reg, false),
+		fmTab:        newState(&reg, 0),
+		fmProps:      &properties.File{},
+		fmRev:        newState(&reg, 0),
+		fmPropsIdx:   newState(&reg, 0),
+		fmEditing:    newState(&reg, false),
+		fmEditText:   newState(&reg, ""),
+		fmDirty:      newState(&reg, false),
+		fmPortEdited: newState(&reg, false),
+		fmWorlds:     newState(&reg, []string{}),
+		fmPlugins:    newState(&reg, []string{}),
+		fmWorldIdx:   newState(&reg, 0),
+		fmPluginIdx:  newState(&reg, 0),
+		fmConfirm:    newState(&reg, ""),
+		fmMsg:        newState(&reg, ""),
+		fmBackups:    newState(&reg, []string{}),
+		fmBackupIdx:  newState(&reg, 0),
+		fmRestore:    newState(&reg, ""),
+		fmLogs:       newState(&reg, []string{}),
+		fmLogIdx:     newState(&reg, 0),
+		fmLogView:    newState(&reg, false),
+		fmLogLines:   newState(&reg, []string{}),
+		fmLogScroll:  newState(&reg, 0),
 
 		mr:          &modrinth.Client{},
 		hangar:      &hangar.Client{},
