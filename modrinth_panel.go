@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -12,11 +13,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/assets"
 	"github.com/JorMath/mc-tui-server/internal/config"
 	"github.com/JorMath/mc-tui-server/internal/download"
+	"github.com/JorMath/mc-tui-server/internal/hangar"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	tui "github.com/grindlemire/go-tui"
 )
@@ -43,15 +46,17 @@ func (a *app) mrOpenPanel() {
 	}
 	a.mrGen.Update(func(g int) int { return g + 1 })
 	a.mrKind.Set(mrKindsFor(mgr.Instance().Type)[0])
+	a.mrSource.Set(sourceAll)
+	a.mrSnapshot.Set(false)
 	a.mrQuery.Set("")
-	a.mrResults.Set([]modrinth.Project{})
+	a.mrResults.Set([]contentItem{})
 	a.mrIdx.Set(0)
 	a.mrBusy.Set(false)
 	a.mrMsg.Set("")
 	a.mrPending = nil
 	a.mrUpd.Set(false)
 	a.mrVerMode.Set(false)
-	a.mrVers.Set([]modrinth.ModVersion{})
+	a.mrVers.Set([]contentVersion{})
 	a.mrVerIdx.Set(0)
 	a.mrTyping.Set(true)
 	a.mrOpen.Set(true)
@@ -77,7 +82,10 @@ func (a *app) mrToggleKind() {
 		}
 	}
 	a.mrKind.Set(next)
-	a.mrResults.Set([]modrinth.Project{})
+	if !a.mrHangarOK() {
+		a.mrSource.Set(sourceAll)
+	}
+	a.mrResults.Set([]contentItem{})
 	a.mrIdx.Set(0)
 	a.mrVerMode.Set(false)
 	a.mrMsg.Set("")
@@ -89,6 +97,136 @@ func (a *app) mrToggleKind() {
 func (a *app) mrClose() {
 	a.mrGen.Update(func(g int) int { return g + 1 })
 	a.mrOpen.Set(false)
+}
+
+// mrHangarOK reports whether Hangar applies to the current instance and
+// content kind. The source filter is only offered when it does.
+func (a *app) mrHangarOK() bool {
+	mgr := a.current()
+	return mgr != nil && hangarAvailable(mgr.Instance().Type, a.mrKind.Get())
+}
+
+// mrSourceLabel is the source filter actually in effect. When Hangar does
+// not apply the panel is Modrinth-only even if the state says "all".
+func (a *app) mrSourceLabel() string {
+	if !a.mrHangarOK() {
+		return sourceModrinth
+	}
+	return a.mrSource.Get()
+}
+
+// mrToggleSource cycles the source filter (key f) and repeats the current
+// search. It is ignored when Hangar does not apply.
+func (a *app) mrToggleSource() {
+	if a.mrBusy.Get() || !a.mrHangarOK() {
+		return
+	}
+	next := nextSource(a.mrSource.Get(), true)
+	a.mrSource.Set(next)
+	a.mrResults.Set([]contentItem{})
+	a.mrIdx.Set(0)
+	a.mrVerMode.Set(false)
+	if !a.mrTyping.Get() && a.mrQuery.Get() != "" {
+		a.mrSearch()
+		return
+	}
+	a.mrMsg.Set("Source: " + next)
+}
+
+// searchLabel is the source name used in progress messages.
+func searchLabel(source string) string {
+	switch source {
+	case sourceModrinth:
+		return "Modrinth"
+	case sourceHangar:
+		return "Hangar"
+	default:
+		return "Modrinth and Hangar"
+	}
+}
+
+// searchResultMessage summarizes a finished search. mrCount and hgCount are
+// -1 for a source that was not queried.
+func searchResultMessage(total, mrCount, hgCount int, warning string) string {
+	msg := fmt.Sprintf("%d results", total)
+	switch {
+	case warning != "":
+		msg += " · " + warning
+	case mrCount >= 0 && hgCount >= 0:
+		msg += fmt.Sprintf(" (%d Modrinth, %d Hangar)", mrCount, hgCount)
+	}
+	return msg + " · Enter installs into the selected instance"
+}
+
+// searchContent queries the selected source(s). With source "all" and a
+// plugin instance, Modrinth and Hangar are queried concurrently and merged.
+// The search only fails when every queried source fails.
+func (a *app) searchContent(ctx context.Context, query string, inst config.Instance, kind, source string) (items []contentItem, mrCount, hgCount int, warning string, err error) {
+	platform, platformOK := hangar.Platform(inst.Type)
+	runModrinth := source != sourceHangar
+	runHangar := platformOK && kind == "plugins" && source != sourceModrinth
+	mrCount, hgCount = -1, -1
+
+	var mrItems, hgItems []contentItem
+	var mrErr, hgErr error
+	var wg sync.WaitGroup
+	if runModrinth {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var results []modrinth.Project
+			var searchErr error
+			if kind == "datapacks" {
+				results, searchErr = a.mr.SearchDatapacks(ctx, query, inst.Version)
+			} else {
+				results, searchErr = a.mr.Search(ctx, query, inst.Type, inst.Version)
+			}
+			if searchErr != nil {
+				mrErr = searchErr
+				return
+			}
+			mrItems = make([]contentItem, len(results))
+			for i, p := range results {
+				mrItems[i] = contentItemFromModrinth(p)
+			}
+		}()
+	}
+	if runHangar {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			results, searchErr := a.hangar.Search(ctx, query, platform)
+			if searchErr != nil {
+				hgErr = searchErr
+				return
+			}
+			hgItems = make([]contentItem, len(results))
+			for i, p := range results {
+				hgItems[i] = contentItemFromHangar(p)
+			}
+		}()
+	}
+	wg.Wait()
+
+	switch {
+	case !runHangar:
+		if mrErr != nil {
+			return nil, -1, -1, "", mrErr
+		}
+		return mrItems, len(mrItems), -1, "", nil
+	case source == sourceHangar:
+		if hgErr != nil {
+			return nil, -1, -1, "", hgErr
+		}
+		return hgItems, -1, len(hgItems), "", nil
+	case mrErr != nil && hgErr != nil:
+		return nil, -1, -1, "", fmt.Errorf("Modrinth: %v; Hangar: %v", mrErr, hgErr)
+	case mrErr != nil:
+		return hgItems, -1, len(hgItems), "Modrinth search failed: " + mrErr.Error(), nil
+	case hgErr != nil:
+		return mrItems, len(mrItems), -1, "Hangar search failed: " + hgErr.Error(), nil
+	}
+	return mergeContentItems(mrItems, hgItems), len(mrItems), len(hgItems), "", nil
 }
 
 func (a *app) mrSearch() {
@@ -108,19 +246,19 @@ func (a *app) mrSearch() {
 	}
 	inst := mgr.Instance()
 	kind := a.mrKind.Get()
+	source := a.mrSourceLabel()
+	if source == sourceHangar && kind != "plugins" {
+		a.mrTyping.Set(false)
+		a.mrMsg.Set("Hangar only serves plugins — press f to switch source")
+		return
+	}
 	gen := a.mrGen.Get()
 	a.mrBusy.Set(true)
-	a.mrMsg.Set("Searching Modrinth...")
+	a.mrMsg.Set("Searching " + searchLabel(source) + "...")
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		var results []modrinth.Project
-		var err error
-		if kind == "datapacks" {
-			results, err = a.mr.SearchDatapacks(ctx, query, inst.Version)
-		} else {
-			results, err = a.mr.Search(ctx, query, inst.Type, inst.Version)
-		}
+		items, mrCount, hgCount, warning, err := a.searchContent(ctx, query, inst, kind, source)
 		if a.mrGen.Get() != gen {
 			return
 		}
@@ -129,14 +267,14 @@ func (a *app) mrSearch() {
 			a.mrMsg.Set("Error: " + err.Error())
 			return
 		}
-		a.mrResults.Set(results)
+		a.mrResults.Set(items)
 		a.mrIdx.Set(0)
 		a.mrTyping.Set(false)
-		if len(results) == 0 {
+		if len(items) == 0 {
 			a.mrMsg.Set(fmt.Sprintf("No %s found for %q compatible with %s %s", kind, query, inst.Type, inst.Version))
 			return
 		}
-		a.mrMsg.Set(fmt.Sprintf("%d results · Enter installs into the selected instance", len(results)))
+		a.mrMsg.Set(searchResultMessage(len(items), mrCount, hgCount, warning))
 	}()
 }
 
@@ -157,6 +295,10 @@ func (a *app) mrInstall() {
 	inst := mgr.Instance()
 	kind := a.mrKind.Get()
 	project := results[idx]
+	if project.Source == sourceHangar {
+		a.mrInstallHangar(project)
+		return
+	}
 	var sub string
 	if kind == "datapacks" {
 		sub = datapacksDir(inst)
@@ -189,6 +331,74 @@ func (a *app) mrInstall() {
 			return
 		}
 		a.mrInstallFile(ctx, gen, inst, sub, kind, project.Title, project.ID, file, deps)
+	}()
+}
+
+// externalMessage is the explicit hint shown for a Hangar version that is
+// hosted outside Hangar. Nothing is downloaded or opened.
+func externalMessage(v hangar.Version) string {
+	target := v.ExternalURL
+	if target == "" {
+		target = v.DownloadURL
+	}
+	return "External download — open " + target
+}
+
+// mrInstallHangar resolves the latest Release version of a Hangar project
+// and downloads it into the plugins directory, verifying its SHA-256.
+func (a *app) mrInstallHangar(project contentItem) {
+	mgr := a.current()
+	if mgr == nil {
+		return
+	}
+	inst := mgr.Instance()
+	platform, ok := hangar.Platform(inst.Type)
+	if !ok || a.mrKind.Get() != "plugins" {
+		return
+	}
+	sub, ok := assets.PluginsDir(inst.Type)
+	if !ok {
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Resolving %s...", project.Title))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		vers, err := a.hangar.Versions(ctx, project.Owner, project.Slug, platform, inst.Version, "Release")
+		if a.mrGen.Get() != gen {
+			return
+		}
+		if err == nil && len(vers) == 0 {
+			err = fmt.Errorf("no Release version of %s supports %s", project.Title, inst.Version)
+		}
+		if err != nil {
+			a.mrBusy.Set(false)
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		v := vers[0]
+		if v.External() {
+			a.mrBusy.Set(false)
+			a.mrMsg.Set(externalMessage(v))
+			return
+		}
+		dest := filepath.Join(inst.Dir, sub, v.FileName)
+		if err := a.hangar.Download(ctx, v, dest); err != nil {
+			if a.mrGen.Get() != gen {
+				return
+			}
+			a.mrBusy.Set(false)
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", v.FileName, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, v.FileName))
 	}()
 }
 
@@ -244,6 +454,10 @@ func (a *app) mrOpenVersions() {
 	}
 	inst := mgr.Instance()
 	project := results[idx]
+	if project.Source == sourceHangar {
+		a.mrLoadHangarVersions(project, false)
+		return
+	}
 	gen := a.mrGen.Get()
 	a.mrBusy.Set(true)
 	a.mrMsg.Set(fmt.Sprintf("Fetching versions of %s...", project.Title))
@@ -259,11 +473,83 @@ func (a *app) mrOpenVersions() {
 			a.mrMsg.Set("Error: " + err.Error())
 			return
 		}
-		a.mrVers.Set(vers)
+		out := make([]contentVersion, len(vers))
+		for i, v := range vers {
+			out[i] = contentVersionFromModrinth(v)
+		}
+		a.mrVers.Set(out)
 		a.mrVerIdx.Set(0)
 		a.mrVerMode.Set(true)
-		a.mrMsg.Set(fmt.Sprintf("%d versions of %s · Enter installs the selected one", len(vers), project.Title))
+		a.mrMsg.Set(fmt.Sprintf("%d versions of %s · Enter installs the selected one", len(out), project.Title))
 	}()
+}
+
+// mrLoadHangarVersions lists Hangar versions for the project on the
+// instance's Minecraft version. keepIdx preserves the selection when the
+// channel is toggled.
+func (a *app) mrLoadHangarVersions(project contentItem, keepIdx bool) {
+	mgr := a.current()
+	if mgr == nil || a.mrBusy.Get() {
+		return
+	}
+	inst := mgr.Instance()
+	platform, ok := hangar.Platform(inst.Type)
+	if !ok {
+		return
+	}
+	channel := "Release"
+	if a.mrSnapshot.Get() {
+		channel = "Snapshot"
+	}
+	gen := a.mrGen.Get()
+	prev := a.mrVerIdx.Get()
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Fetching %s versions of %s...", strings.ToLower(channel), project.Title))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		vers, err := a.hangar.Versions(ctx, project.Owner, project.Slug, platform, inst.Version, channel)
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		if err != nil {
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		if len(vers) == 0 {
+			a.mrVerMode.Set(false)
+			a.mrMsg.Set(fmt.Sprintf("No %s versions of %s support %s", channel, project.Title, inst.Version))
+			return
+		}
+		out := make([]contentVersion, len(vers))
+		for i, v := range vers {
+			out[i] = contentVersionFromHangar(v)
+		}
+		a.mrVers.Set(out)
+		if keepIdx && prev < len(out) {
+			a.mrVerIdx.Set(prev)
+		} else {
+			a.mrVerIdx.Set(0)
+		}
+		a.mrVerMode.Set(true)
+		a.mrMsg.Set(fmt.Sprintf("%d %s versions of %s · Enter installs the selected one", len(out), channel, project.Title))
+	}()
+}
+
+// mrToggleChannel switches Hangar versions between Release and Snapshot and
+// refetches them. It is ignored for Modrinth rows.
+func (a *app) mrToggleChannel() {
+	results := a.mrResults.Get()
+	idx := a.mrIdx.Get()
+	if a.mrBusy.Get() || idx < 0 || idx >= len(results) {
+		return
+	}
+	if results[idx].Source != sourceHangar {
+		return
+	}
+	a.mrSnapshot.Update(func(b bool) bool { return !b })
+	a.mrLoadHangarVersions(results[idx], true)
 }
 
 // mrInstallVersion instala la versión elegida en el selector.
@@ -282,15 +568,54 @@ func (a *app) mrInstallVersion() {
 	if !ok {
 		return
 	}
+	if project.Source == sourceHangar {
+		a.mrInstallHangarVersion(inst, sub, project, chosen)
+		return
+	}
 	kind := a.mrKind.Get()
 	gen := a.mrGen.Get()
 	a.mrVerMode.Set(false)
 	a.mrBusy.Set(true)
-	a.mrMsg.Set(fmt.Sprintf("Installing %s %s...", project.Title, chosen.VersionNumber))
+	a.mrMsg.Set(fmt.Sprintf("Installing %s %s...", project.Title, chosen.Label))
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 		defer cancel()
 		a.mrInstallFile(ctx, gen, inst, sub, kind, project.Title, project.ID, chosen.File, chosen.Deps)
+	}()
+}
+
+// mrInstallHangarVersion downloads the selected Hangar version into the
+// plugin directory. External versions install nothing and only report their
+// page URL.
+func (a *app) mrInstallHangarVersion(inst config.Instance, sub string, project contentItem, chosen contentVersion) {
+	v := toHangarVersion(chosen)
+	if v.External() {
+		a.mrVerMode.Set(false)
+		a.mrMsg.Set(externalMessage(v))
+		return
+	}
+	gen := a.mrGen.Get()
+	a.mrVerMode.Set(false)
+	a.mrBusy.Set(true)
+	a.mrMsg.Set(fmt.Sprintf("Installing %s %s...", project.Title, chosen.Label))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		dest := filepath.Join(inst.Dir, sub, v.FileName)
+		if err := a.hangar.Download(ctx, v, dest); err != nil {
+			if a.mrGen.Get() != gen {
+				return
+			}
+			a.mrBusy.Set(false)
+			a.mrMsg.Set("Error: " + err.Error())
+			return
+		}
+		if a.mrGen.Get() != gen {
+			return
+		}
+		a.mrBusy.Set(false)
+		a.mrMsg.Set(fmt.Sprintf("Installed %s into %s/ · restart the server to load it", v.FileName, sub))
+		a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Installed %s (%s)", project.Title, v.FileName))
 	}()
 }
 
@@ -342,29 +667,54 @@ func (a *app) mrInstallDeps(ctx context.Context, gen int, inst config.Instance, 
 	return installed
 }
 
-// sha1Of calcula el sha1 en hex de un archivo.
-func sha1Of(path string) (string, error) {
+// hashesOf computes the SHA-1 and SHA-256 of a file in one read. Both are
+// needed for update checks: Modrinth matches jars by SHA-1 and Hangar by
+// SHA-256.
+func hashesOf(path string) (string, string, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer f.Close()
-	h := sha1.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
+	h1 := sha1.New()
+	h256 := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(h1, h256), f); err != nil {
+		return "", "", err
 	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hex.EncodeToString(h1.Sum(nil)), hex.EncodeToString(h256.Sum(nil)), nil
 }
 
-// pendingUpdate es una actualización encontrada, a la espera de confirmar.
+// sha1Of calculates the hex SHA-1 of a file.
+func sha1Of(path string) (string, error) {
+	sum, _, err := hashesOf(path)
+	return sum, err
+}
+
+// pendingUpdate is an update found during an update-all pass, waiting for
+// confirmation.
 type pendingUpdate struct {
-	Old  string
-	File modrinth.File
+	Old    string
+	Source string        // "modrinth" | "hangar"
+	File   modrinth.File // Filename, URL, VersionNumber and Changelog
+	SHA256 string        // Hangar only, verified when downloading
 }
 
-// mrUpdateAll (tecla u) compara los mods/plugins instalados contra
-// Modrinth por hash y, si hay versiones nuevas, pide confirmación antes
-// de descargar nada. Los archivos que Modrinth no reconoce se dejan igual.
+// lookupFailureText names the source(s) that could not answer an update
+// check, so the summary never presents a network failure as "unknown file".
+func lookupFailureText(mrErr, hgErr error) string {
+	switch {
+	case mrErr != nil && hgErr != nil:
+		return fmt.Sprintf("Modrinth and Hangar failed (%v; %v)", mrErr, hgErr)
+	case mrErr != nil:
+		return "Modrinth failed (" + mrErr.Error() + ")"
+	default:
+		return "Hangar failed (" + hgErr.Error() + ")"
+	}
+}
+
+// mrUpdateAll (key u) compares the installed mods/plugins against Modrinth
+// and Hangar by file hash and asks for confirmation before downloading
+// anything. Files neither source recognises are left untouched.
 func (a *app) mrUpdateAll() {
 	mgr := a.current()
 	if mgr == nil || a.mrBusy.Get() || a.mrKind.Get() == "datapacks" {
@@ -375,6 +725,8 @@ func (a *app) mrUpdateAll() {
 	if !ok {
 		return
 	}
+	platform, platformOK := hangar.Platform(inst.Type)
+	hangarOK := platformOK && a.mrKind.Get() == "plugins"
 	gen := a.mrGen.Get()
 	a.mrBusy.Set(true)
 	a.mrMsg.Set("Checking installed files for updates...")
@@ -386,57 +738,144 @@ func (a *app) mrUpdateAll() {
 		if err == nil && len(names) == 0 {
 			err = fmt.Errorf("no files in %s/ to update", sub)
 		}
-		byHash := map[string]string{}
-		var hashes []string
+		type localFile struct {
+			name   string
+			sha1   string
+			sha256 string
+		}
+		var files []localFile
+		var sha1s []string
 		if err == nil {
 			for _, n := range names {
-				h, hashErr := sha1Of(filepath.Join(dir, n))
+				h1, h256, hashErr := hashesOf(filepath.Join(dir, n))
 				if hashErr != nil {
 					err = hashErr
 					break
 				}
-				byHash[h] = n
-				hashes = append(hashes, h)
+				files = append(files, localFile{name: n, sha1: h1, sha256: h256})
+				sha1s = append(sha1s, h1)
 			}
 		}
-		var latest map[string]modrinth.File
-		if err == nil {
-			latest, err = a.mr.LatestByHash(ctx, inst.Type, inst.Version, hashes)
+		// Each source is queried best-effort: one that is down only leaves
+		// its own files unchecked, it never hides the other source's results.
+		latest, mrErr := a.mr.LatestByHash(ctx, inst.Type, inst.Version, sha1s)
+		var pending []pendingUpdate
+		current, unknown, unchecked := 0, 0, 0
+		var hgErr error
+		for _, f := range files {
+			if mrErr == nil {
+				if file, known := latest[f.sha1]; known {
+					if file.SHA1 == f.sha1 {
+						current++
+					} else {
+						pending = append(pending, pendingUpdate{Old: f.name, Source: sourceModrinth, File: file})
+					}
+					continue
+				}
+			}
+			// Modrinth does not know this jar (or could not answer). Ask
+			// Hangar when it applies.
+			if !hangarOK {
+				if mrErr != nil {
+					unchecked++
+				} else {
+					unknown++
+				}
+				continue
+			}
+			project, found, hashErr := a.hangar.ByHash(ctx, f.sha256)
+			if hashErr != nil {
+				hgErr = hashErr
+				unchecked++
+				continue
+			}
+			if !found {
+				// A 404 is a real answer only while Modrinth still speaks.
+				if mrErr != nil {
+					unchecked++
+				} else {
+					unknown++
+				}
+				continue
+			}
+			vers, verErr := a.hangar.Versions(ctx, project.Owner, project.Slug, platform, inst.Version, "Release")
+			if verErr != nil {
+				hgErr = verErr
+				unchecked++
+				continue
+			}
+			if len(vers) == 0 || vers[0].External() {
+				unknown++
+				continue
+			}
+			v := vers[0]
+			if strings.EqualFold(v.SHA256, f.sha256) {
+				current++
+				continue
+			}
+			pending = append(pending, pendingUpdate{
+				Old:    f.name,
+				Source: sourceHangar,
+				File: modrinth.File{
+					Filename:      v.FileName,
+					URL:           v.DownloadURL,
+					VersionNumber: v.Name,
+				},
+				SHA256: v.SHA256,
+			})
 		}
 		if a.mrGen.Get() != gen {
 			return
 		}
 		a.mrBusy.Set(false)
-		if err != nil {
-			a.mrMsg.Set("Error: " + err.Error())
+		// Nothing could be checked: report the failure instead of a false
+		// "everything up to date".
+		if mrErr != nil && (!hangarOK || (hgErr != nil && unchecked == len(files))) {
+			if hgErr != nil {
+				a.mrMsg.Set(fmt.Sprintf("Error: Modrinth: %v; Hangar: %v", mrErr, hgErr))
+			} else {
+				a.mrMsg.Set("Error: " + mrErr.Error())
+			}
 			return
 		}
-		var pending []pendingUpdate
-		current, unknown := 0, 0
-		for hash, oldName := range byHash {
-			file, ok := latest[hash]
-			switch {
-			case !ok:
-				unknown++
-			case file.SHA1 == hash:
-				current++
-			default:
-				pending = append(pending, pendingUpdate{Old: oldName, File: file})
-			}
+		gap := ""
+		switch {
+		case unchecked > 0:
+			gap = fmt.Sprintf(" · %d unchecked: %s", unchecked, lookupFailureText(mrErr, hgErr))
+		case mrErr != nil:
+			// Hangar resolved every file, but the Modrinth pass is still
+			// incomplete and must be reported.
+			gap = " · " + lookupFailureText(mrErr, nil)
 		}
 		if len(pending) == 0 {
-			a.mrMsg.Set(fmt.Sprintf("Everything up to date (%d current, %d not on Modrinth)", current, unknown))
+			sources := "Modrinth"
+			if hangarOK {
+				sources = "Modrinth or Hangar"
+			}
+			a.mrMsg.Set(fmt.Sprintf("Everything up to date (%d current, %d not on %s)%s", current, unknown, sources, gap))
 			return
+		}
+		modrinthUpdates, hangarUpdates := 0, 0
+		for _, u := range pending {
+			if u.Source == sourceHangar {
+				hangarUpdates++
+			} else {
+				modrinthUpdates++
+			}
 		}
 		a.mrPending = pending
 		a.mrUpd.Set(true)
-		a.mrMsg.Set(fmt.Sprintf("%d updates available (%d current, %d not on Modrinth) — update now?",
-			len(pending), current, unknown))
+		if hangarOK {
+			a.mrMsg.Set(fmt.Sprintf("%d updates available (%d Modrinth, %d Hangar; %d current, %d unknown)%s — update now?",
+				len(pending), modrinthUpdates, hangarUpdates, current, unknown, gap))
+		} else {
+			a.mrMsg.Set(fmt.Sprintf("%d updates available (%d current, %d not on Modrinth)%s — update now?",
+				len(pending), current, unknown, gap))
+		}
 	}()
 }
 
-// mrApplyUpdates descarga las actualizaciones confirmadas y borra los
-// archivos viejos.
+// mrApplyUpdates downloads the confirmed updates and deletes the old files.
 func (a *app) mrApplyUpdates() {
 	mgr := a.current()
 	pending := a.mrPending
@@ -459,7 +898,19 @@ func (a *app) mrApplyUpdates() {
 		updated := 0
 		for _, u := range pending {
 			a.mrMsg.Set(fmt.Sprintf("Updating %s → %s...", u.Old, u.File.Filename))
-			if err := download.DownloadFile(ctx, nil, u.File.URL, filepath.Join(dir, u.File.Filename), nil); err != nil {
+			dest := filepath.Join(dir, u.File.Filename)
+			var err error
+			if u.Source == sourceHangar {
+				err = a.hangar.Download(ctx, hangar.Version{
+					Name:        u.File.VersionNumber,
+					DownloadURL: u.File.URL,
+					FileName:    u.File.Filename,
+					SHA256:      u.SHA256,
+				}, dest)
+			} else {
+				err = download.DownloadFile(ctx, nil, u.File.URL, dest, nil)
+			}
+			if err != nil {
 				a.appendLog(inst.Name, fmt.Sprintf("[mc-tui] Update of %s failed: %s", u.Old, err))
 				continue
 			}
@@ -525,8 +976,15 @@ func (a *app) mrItems() []listItem {
 		vers := a.mrVers.Get()
 		lines := make([]string, len(vers))
 		for i, v := range vers {
-			lines[i] = fmt.Sprintf("%s — MC %s [%s] (%s)",
-				v.VersionNumber, strings.Join(v.GameVersions, ", "), v.VersionType, v.File.Filename)
+			line := fmt.Sprintf("%s — MC %s [%s] (%s)",
+				v.Label, gameVersionsLabel(v), v.Channel, v.File.Filename)
+			if len(v.PluginDeps) > 0 {
+				line += " · requires " + strings.Join(v.PluginDeps, ", ")
+			}
+			if v.external() {
+				line += " · external"
+			}
+			lines[i] = line
 		}
 		return fullItems(lines, a.mrVerIdx.Get())
 	}
@@ -537,7 +995,15 @@ func (a *app) mrItems() []listItem {
 		if r := []rune(desc); len(r) > limit {
 			desc = string(r[:limit]) + "…"
 		}
-		lines[i] = fmt.Sprintf("%s (%s ⇩) — %s", p.Title, mrDownloadsText(p.Downloads), desc)
+		badge := "M"
+		if p.Source == sourceHangar {
+			badge = "H"
+		}
+		also := ""
+		if p.AlsoOn != "" {
+			also = " (also on Hangar)"
+		}
+		lines[i] = fmt.Sprintf("[%s] %s (%s ⇩) — %s%s", badge, p.Title, mrDownloadsText(p.Downloads), desc, also)
 	}
 	return fullItems(lines, a.mrIdx.Get())
 }
@@ -566,12 +1032,24 @@ func (a *app) mrHasKinds() bool {
 	return mgr != nil && len(mrKindsFor(mgr.Instance().Type)) > 1
 }
 
+// mrVersionIsHangar reports whether the project being browsed in the
+// version selector is a Hangar row.
+func (a *app) mrVersionIsHangar() bool {
+	results := a.mrResults.Get()
+	idx := a.mrIdx.Get()
+	return idx >= 0 && idx < len(results) && results[idx].Source == sourceHangar
+}
+
 func (a *app) mrHints() []hint {
 	if a.mrUpd.Get() {
 		return []hint{{"y", "update all"}, {"n/Esc", "cancel"}}
 	}
 	if a.mrVerMode.Get() {
-		return []hint{{"↑/↓", "select"}, {"Enter", "install this version"}, {"Esc", "back"}}
+		hints := []hint{{"↑/↓", "select"}, {"Enter", "install this version"}}
+		if a.mrVersionIsHangar() {
+			hints = append(hints, hint{"t", "release/snapshot"})
+		}
+		return append(hints, hint{"Esc", "back"})
 	}
 	var hints []hint
 	if a.mrTyping.Get() {
@@ -580,6 +1058,9 @@ func (a *app) mrHints() []hint {
 		hints = []hint{{"↑/↓", "select"}, {"Enter", "install"}, {"/", "new search"}}
 		if a.mrKind.Get() != "datapacks" {
 			hints = append(hints, hint{"v", "pick version"}, hint{"u", "update all"})
+		}
+		if a.mrHangarOK() {
+			hints = append(hints, hint{"f", "source"})
 		}
 	}
 	if a.mrHasKinds() {
@@ -602,7 +1083,7 @@ func (a *app) mrKeyMap() tui.KeyMap {
 		}
 	}
 	if a.mrVerMode.Get() {
-		return tui.KeyMap{
+		keys := tui.KeyMap{
 			tui.OnStop(tui.KeyUp, func(ke tui.KeyEvent) { a.mrMoveVer(-1) }),
 			tui.OnStop(tui.KeyDown, func(ke tui.KeyEvent) { a.mrMoveVer(1) }),
 			tui.OnStop(tui.KeyPageUp, func(ke tui.KeyEvent) { a.mrMoveVer(-10) }),
@@ -613,6 +1094,10 @@ func (a *app) mrKeyMap() tui.KeyMap {
 				a.mrMsg.Set("")
 			}),
 		}
+		if a.mrVersionIsHangar() {
+			keys = append(keys, tui.OnStop(tui.Rune('t'), func(ke tui.KeyEvent) { a.mrToggleChannel() }))
+		}
+		return keys
 	}
 	esc := tui.OnStop(tui.KeyEscape, func(ke tui.KeyEvent) { a.mrClose() })
 	tab := tui.OnStop(tui.KeyTab, func(ke tui.KeyEvent) { a.mrToggleKind() })
@@ -644,6 +1129,7 @@ func (a *app) mrKeyMap() tui.KeyMap {
 		tui.OnStop(tui.Rune('/'), func(ke tui.KeyEvent) { a.mrTyping.Set(true) }),
 		tui.OnStop(tui.Rune('u'), func(ke tui.KeyEvent) { a.mrUpdateAll() }),
 		tui.OnStop(tui.Rune('v'), func(ke tui.KeyEvent) { a.mrOpenVersions() }),
+		tui.OnStop(tui.Rune('f'), func(ke tui.KeyEvent) { a.mrToggleSource() }),
 		tab,
 		esc,
 	}

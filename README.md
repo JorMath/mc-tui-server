@@ -3,7 +3,7 @@
 A terminal UI (TUI) written in Go to manage local Minecraft servers: create
 instances, start/stop/restart them, watch the live console, send commands,
 edit `server.properties`, manage worlds and plugins, and install content
-from Modrinth — all from one screen.
+from Modrinth and Hangar — all from one screen.
 
 Built with [go-tui](https://github.com/grindlemire/go-tui).
 
@@ -49,16 +49,21 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   swaps the jar and optionally restarts. Downgrades are warned about.
 - **File manager** — edit `server.properties` (comments preserved), list
   and delete worlds and plugins/mods safely.
-- **Modrinth** — search content filtered by your instance's loader and game
-  version and install it with one key. Each instance only offers what it
-  supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur,
-  and datapacks on every type (installed into the active world); `Tab`
-  switches the content type. Installing a mod also pulls in its required
-  dependencies (Fabric API and friends) automatically, and `v` lets you
-  pick a specific version instead of the latest. Press `u` to check every
-  installed mod or plugin for newer compatible versions (matched by file
-  hash) and update them all after confirming — the confirmation lists each
-  change with its version and changelog.
+- **Modrinth and Hangar** — search content filtered by your instance's loader
+  and game version and install it with one key. Each instance only offers what
+  it supports: mods on Fabric/Forge/NeoForge/Quilt, plugins on Paper/Purpur
+  (from both Modrinth and Hangar), and datapacks on every type (installed into
+  the active world); `Tab` switches the content type. When Hangar applies, `f`
+  cycles the source filter (all, Modrinth, Hangar); merged rows are tagged
+  `[M]` or `[H]`, and projects found on both sources show `(also on Hangar)`.
+  Installing a mod also pulls in its required dependencies (Fabric API and
+  friends) automatically — Hangar's required plugin dependencies are reported
+  but never installed automatically — and `v` lets you pick a specific version
+  instead of the latest; for Hangar versions, `t` switches between Release and
+  Snapshot channels. Press `u` to check every installed mod or plugin for newer
+  compatible versions (matched by file hash) and update them all after
+  confirming — the confirmation lists each change with its version and
+  changelog.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
@@ -162,7 +167,7 @@ mc-tui-server -version   # print the version and exit
 | `q` | quit (running servers are stopped gracefully) |
 
 The actions menu groups everything else into four sections: **Lifecycle**
-(start, stop, restart, send command), **Content** (files, Modrinth,
+(start, stop, restart, send command), **Content** (files, Modrinth/Hangar,
 players), **Maintenance** (backup world, scheduler, update server software,
 Java runtime) and **Instance** (auto-restart, clone, rename, memory,
 delete). Move with `↑/↓` or `j/k`, run the selected action with `Enter` and
