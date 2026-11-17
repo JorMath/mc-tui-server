@@ -31,11 +31,21 @@ const (
 
 // Project is a search result or a project resolved by file hash.
 type Project struct {
+	ID          int
 	Name        string
 	Owner       string
 	Slug        string
 	Description string
 	Downloads   int
+}
+
+// Dependency is one required or optional plugin dependency declared by a
+// version, identified by its Hangar project id.
+type Dependency struct {
+	ProjectID   int
+	Name        string
+	Required    bool
+	ExternalURL string
 }
 
 // Version is a concrete plugin version as published on Hangar.
@@ -49,10 +59,10 @@ type Version struct {
 	ExternalURL  string
 	GameVersions []string // platformDependencies.PAPER
 	GameRange    string   // platformDependenciesFormatted.PAPER[0], may be empty
-	// Dependencies lists the required plugin dependencies by project name.
-	// Hangar dependencies are not installed automatically; the UI only
-	// reports them.
-	Dependencies []string
+	// Dependencies holds every plugin dependency declared for the requested
+	// platform. Required and optional entries are both kept: the UI reports
+	// them and the installer follows the required ones.
+	Dependencies []Dependency
 }
 
 // External reports whether Hangar hosts the file itself. Externally hosted
@@ -139,6 +149,7 @@ func (c *Client) getJSON(ctx context.Context, endpoint string, v any) (int, erro
 // projectJSON mirrors the project object returned by search and by the hash
 // lookup.
 type projectJSON struct {
+	ID        int    `json:"id"`
 	Name      string `json:"name"`
 	Namespace struct {
 		Owner string `json:"owner"`
@@ -152,6 +163,7 @@ type projectJSON struct {
 
 func (p projectJSON) project() Project {
 	return Project{
+		ID:          p.ID,
 		Name:        p.Name,
 		Owner:       p.Namespace.Owner,
 		Slug:        p.Namespace.Slug,
@@ -201,8 +213,10 @@ type versionJSON struct {
 		DownloadURL string `json:"downloadUrl"`
 	} `json:"downloads"`
 	PluginDependencies map[string][]struct {
-		Name     string `json:"name"`
-		Required bool   `json:"required"`
+		Name        string `json:"name"`
+		ProjectID   int    `json:"projectId"`
+		Required    bool   `json:"required"`
+		ExternalURL string `json:"externalUrl"`
 	} `json:"pluginDependencies"`
 	PlatformDependencies map[string][]string `json:"platformDependencies"`
 	PlatformFormatted    map[string][]string `json:"platformDependenciesFormatted"`
@@ -213,11 +227,14 @@ func (v versionJSON) version(platform string) Version {
 		platform = paperPlatform
 	}
 	file := v.Downloads[platform]
-	deps := make([]string, 0, len(v.PluginDependencies[platform]))
+	deps := make([]Dependency, 0, len(v.PluginDependencies[platform]))
 	for _, dep := range v.PluginDependencies[platform] {
-		if dep.Required && dep.Name != "" {
-			deps = append(deps, dep.Name)
-		}
+		deps = append(deps, Dependency{
+			ProjectID:   dep.ProjectID,
+			Name:        dep.Name,
+			Required:    dep.Required,
+			ExternalURL: dep.ExternalURL,
+		})
 	}
 	gameRange := ""
 	if list := v.PlatformFormatted[platform]; len(list) > 0 {
@@ -237,13 +254,9 @@ func (v versionJSON) version(platform string) Version {
 	}
 }
 
-// Versions lists the versions of a project on the given platform, newest
-// first. platformVersion and channel narrow the query server-side and are
-// omitted when empty.
-func (c *Client) Versions(ctx context.Context, owner, slug, platform, platformVersion, channel string) ([]Version, error) {
-	if owner == "" || slug == "" {
-		return nil, fmt.Errorf("hangar: project owner and slug are required")
-	}
+// versionParams builds the query shared by the versions endpoints.
+// empty filters are omitted; limit and offset are always sent.
+func versionParams(platform, platformVersion, channel string, limit int) url.Values {
 	params := url.Values{}
 	if platform != "" {
 		params.Set("platform", platform)
@@ -254,8 +267,19 @@ func (c *Client) Versions(ctx context.Context, owner, slug, platform, platformVe
 	if channel != "" {
 		params.Set("channel", channel)
 	}
-	params.Set("limit", strconv.Itoa(pageSize))
+	params.Set("limit", strconv.Itoa(limit))
 	params.Set("offset", "0")
+	return params
+}
+
+// Versions lists the versions of a project on the given platform, newest
+// first. platformVersion and channel narrow the query server-side and are
+// omitted when empty.
+func (c *Client) Versions(ctx context.Context, owner, slug, platform, platformVersion, channel string) ([]Version, error) {
+	if owner == "" || slug == "" {
+		return nil, fmt.Errorf("hangar: project owner and slug are required")
+	}
+	params := versionParams(platform, platformVersion, channel, pageSize)
 
 	var resp struct {
 		Result []versionJSON `json:"result"`
@@ -270,6 +294,40 @@ func (c *Client) Versions(ctx context.Context, owner, slug, platform, platformVe
 		out = append(out, v.version(platform))
 	}
 	return out, nil
+}
+
+// ProjectByID fetches a project by its numeric Hangar id.
+func (c *Client) ProjectByID(ctx context.Context, id int) (Project, error) {
+	if id <= 0 {
+		return Project{}, fmt.Errorf("hangar: project id is required")
+	}
+	var p projectJSON
+	endpoint := fmt.Sprintf("%s/api/v1/projects/%d", c.base(), id)
+	if _, err := c.getJSON(ctx, endpoint, &p); err != nil {
+		return Project{}, err
+	}
+	return p.project(), nil
+}
+
+// LatestVersionByID returns the newest version of a project for the given
+// platform, Minecraft version and channel. found is false when the project
+// publishes no such version.
+func (c *Client) LatestVersionByID(ctx context.Context, id int, platform, platformVersion, channel string) (Version, bool, error) {
+	if id <= 0 {
+		return Version{}, false, fmt.Errorf("hangar: project id is required")
+	}
+	params := versionParams(platform, platformVersion, channel, 1)
+	var resp struct {
+		Result []versionJSON `json:"result"`
+	}
+	endpoint := fmt.Sprintf("%s/api/v1/projects/%d/versions?%s", c.base(), id, params.Encode())
+	if _, err := c.getJSON(ctx, endpoint, &resp); err != nil {
+		return Version{}, false, err
+	}
+	if len(resp.Result) == 0 {
+		return Version{}, false, nil
+	}
+	return resp.Result[0].version(platform), true, nil
 }
 
 // ByHash returns the project that published a file with the given SHA-256.

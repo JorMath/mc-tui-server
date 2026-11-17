@@ -56,14 +56,15 @@ Built with [go-tui](https://github.com/grindlemire/go-tui).
   the active world); `Tab` switches the content type. When Hangar applies, `f`
   cycles the source filter (all, Modrinth, Hangar); merged rows are tagged
   `[M]` or `[H]`, and projects found on both sources show `(also on Hangar)`.
-  Installing a mod also pulls in its required dependencies (Fabric API and
-  friends) automatically — Hangar's required plugin dependencies are reported
-  but never installed automatically — and `v` lets you pick a specific version
-  instead of the latest; for Hangar versions, `t` switches between Release and
-  Snapshot channels. Press `u` to check every installed mod or plugin for newer
-  compatible versions (matched by file hash) and update them all after
-  confirming — the confirmation lists each change with its version and
-  changelog.
+  Installing a mod or plugin also pulls in its required dependencies (Fabric
+  API and friends) automatically — Hangar dependencies are installed
+  recursively the same way, each one verified by its SHA-256, and a
+  dependency hosted outside Hangar is reported instead of fetched — and `v`
+  lets you pick a specific version instead of the latest; for Hangar versions,
+  `t` switches between Release and Snapshot channels. Press `u` to check every
+  installed mod or plugin for newer compatible versions (matched by file hash)
+  and update them all after confirming — the confirmation lists each change
+  with its version and changelog.
 - **Modpacks** — create a new instance from a Modrinth modpack (`.mrpack`)
   on any loader: Fabric, Forge, NeoForge or Quilt. The wizard downloads the
   pack's server files and overrides, then sets up the loader runtime —
