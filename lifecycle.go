@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/backup"
@@ -104,6 +106,7 @@ func (a *app) refreshStatuses() {
 	})
 	a.refreshSamples()
 	a.refreshPings()
+	a.refreshPorts()
 	a.refreshSchedules()
 }
 
@@ -246,6 +249,47 @@ func serverPort(inst config.Instance) string {
 		}
 	}
 	return "25565"
+}
+
+// refreshPorts re-reads the cached instance ports every ~5s (10 ticks of
+// 500ms). The sidebar renders this cache instead of reading
+// server.properties, which a busy server would otherwise trigger on every
+// console line.
+func (a *app) refreshPorts() {
+	a.portsTick++
+	if a.portsTick%10 != 0 {
+		return
+	}
+	a.reloadPorts()
+}
+
+// reloadPorts rebuilds the port cache from the instance registry. It also
+// runs right after the wizard or the properties editor writes a port.
+func (a *app) reloadPorts() {
+	a.ports.Set(instancePorts(a.store.Instances()))
+}
+
+// instancePorts maps each instance name to the port its server.properties
+// declares (25565 when the file or the key is missing).
+func instancePorts(instances []config.Instance) map[string]int {
+	out := make(map[string]int, len(instances))
+	for _, inst := range instances {
+		port, err := strconv.Atoi(strings.TrimSpace(serverPort(inst)))
+		if err != nil {
+			continue
+		}
+		out[inst.Name] = port
+	}
+	return out
+}
+
+// portText is the sidebar line with the instance's port ("" when unknown).
+func (a *app) portText(name string) string {
+	port, ok := a.ports.Get()[name]
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(":%d", port)
 }
 
 // refreshPings consulta el server-list-ping de las instancias corriendo

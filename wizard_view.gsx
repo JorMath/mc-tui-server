@@ -138,6 +138,17 @@ templ WizardView(a *app) {
 				<span class="text-cyan blink">_</span>
 			</div>
 		}
+		if a.wizStep.Get() == wizPort {
+			<div class="flex gap-1">
+				<span class="text-cyan font-bold">Port:</span>
+				<span>{a.wizPort.Get()}</span>
+				<span class="text-cyan blink">_</span>
+			</div>
+			<span class="font-dim">The TCP port the server binds</span>
+			if a.wizMsg.Get() != "" {
+				<span class="text-red">{a.wizMsg.Get()}</span>
+			}
+		}
 		if a.wizStep.Get() == wizEula {
 			<span>To run the server you must accept the Minecraft EULA:</span>
 			<span class="text-cyan">{"https://aka.ms/MinecraftEULA"}</span>

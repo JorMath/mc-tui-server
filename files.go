@@ -10,12 +10,14 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/JorMath/mc-tui-server/internal/assets"
 	"github.com/JorMath/mc-tui-server/internal/backup"
 	"github.com/JorMath/mc-tui-server/internal/config"
+	"github.com/JorMath/mc-tui-server/internal/ports"
 	"github.com/JorMath/mc-tui-server/internal/properties"
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
@@ -99,6 +101,7 @@ func (a *app) fmOpenPanel() {
 	a.fmLogView.Set(false)
 	a.fmEditing.Set(false)
 	a.fmDirty.Set(false)
+	a.fmPortEdited.Set(false)
 	a.fmConfirm.Set("")
 	a.fmRestore.Set("")
 	a.fmMsg.Set("")
@@ -242,6 +245,9 @@ func (a *app) fmBeginEdit() {
 func (a *app) fmCommitEdit() {
 	key := a.fmSelectedKey()
 	a.fmProps.Set(key, a.fmEditText.Get())
+	if key == "server-port" {
+		a.fmPortEdited.Set(true)
+	}
 	a.fmDirty.Set(true)
 	a.fmEditing.Set(false)
 	a.fmRev.Update(func(r int) int { return r + 1 })
@@ -253,13 +259,37 @@ func (a *app) fmSave() {
 	if mgr == nil {
 		return
 	}
-	path := filepath.Join(mgr.Instance().Dir, "server.properties")
+	inst := mgr.Instance()
+	if a.fmPortEdited.Get() {
+		if err := a.fmCheckPort(inst); err != nil {
+			a.fmMsg.Set("Error: " + err.Error())
+			return
+		}
+	}
+	path := filepath.Join(inst.Dir, "server.properties")
 	if err := a.fmProps.Save(path); err != nil {
 		a.fmMsg.Set("Error: " + err.Error())
 		return
 	}
+	a.fmPortEdited.Set(false)
 	a.fmDirty.Set(false)
+	a.reloadPorts()
 	a.fmMsg.Set("Saved. Restart the server to apply the changes")
+}
+
+// fmCheckPort validates an edited server-port before writing: the value has
+// to be numeric, inside the TCP range and either free or this instance's own
+// port. Other keys are written without any port check.
+func (a *app) fmCheckPort(inst config.Instance) error {
+	raw, ok := a.fmProps.Get("server-port")
+	if !ok {
+		return nil
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil {
+		return fmt.Errorf("%q is not a valid port number", raw)
+	}
+	return ports.Validate(a.store.Instances(), inst.Name, port)
 }
 
 // fmAskDelete pide confirmación para borrar el mundo o plugin seleccionado.

@@ -232,19 +232,26 @@ func Sidebar(a *app, rowRefs *tui.RefMap[string]) *SidebarView {
 			__tui_5.AddChild(__tui_11)
 		}
 		__tui_4.AddChild(__tui_5)
-		if a.metricText(mgr.Instance().Name) != "" {
+		if a.portText(mgr.Instance().Name) != "" {
 			__tui_12 := tui.New(
-				tui.WithText(a.metricText(mgr.Instance().Name)),
+				tui.WithText(a.portText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Dim()),
 			)
 			__tui_4.AddChild(__tui_12)
 		}
-		if a.playersText(mgr.Instance().Name) != "" {
+		if a.metricText(mgr.Instance().Name) != "" {
 			__tui_13 := tui.New(
+				tui.WithText(a.metricText(mgr.Instance().Name)),
+				tui.WithTextStyle(tui.NewStyle().Dim()),
+			)
+			__tui_4.AddChild(__tui_13)
+		}
+		if a.playersText(mgr.Instance().Name) != "" {
+			__tui_14 := tui.New(
 				tui.WithText(a.playersText(mgr.Instance().Name)),
 				tui.WithTextStyle(tui.NewStyle().Foreground(tui.Green)),
 			)
-			__tui_4.AddChild(__tui_13)
+			__tui_4.AddChild(__tui_14)
 		}
 		__tui_0.AddChild(__tui_4)
 	}

@@ -56,6 +56,9 @@ templ Sidebar(a *app, rowRefs *tui.RefMap[string]) {
 						<span class="font-dim">{a.statusText(mgr.Instance().Name)}</span>
 					}
 				</div>
+				if a.portText(mgr.Instance().Name) != "" {
+					<span class="font-dim">{a.portText(mgr.Instance().Name)}</span>
+				}
 				if a.metricText(mgr.Instance().Name) != "" {
 					<span class="font-dim">{a.metricText(mgr.Instance().Name)}</span>
 				}

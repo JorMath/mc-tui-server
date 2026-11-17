@@ -20,6 +20,8 @@ import (
 	"github.com/JorMath/mc-tui-server/internal/javaenv"
 	"github.com/JorMath/mc-tui-server/internal/modrinth"
 	"github.com/JorMath/mc-tui-server/internal/mrpack"
+	"github.com/JorMath/mc-tui-server/internal/ports"
+	"github.com/JorMath/mc-tui-server/internal/properties"
 	"github.com/JorMath/mc-tui-server/internal/server"
 	tui "github.com/grindlemire/go-tui"
 )
@@ -38,6 +40,7 @@ const (
 	wizImpVer
 	wizName
 	wizMem
+	wizPort
 	wizEula
 	wizJava
 	wizDownload
@@ -97,6 +100,8 @@ func (a *app) wizOpen() {
 	a.wizVerIdx.Set(0)
 	a.wizName.Set("")
 	a.wizMemory.Set("")
+	a.wizPort.Set("")
+	a.wizPortDefault.Set(0)
 	a.wizMsg.Set("")
 	a.wizPackQuery.Set("")
 	a.wizPacks.Set([]modrinth.Project{})
@@ -204,11 +209,84 @@ func (a *app) wizMemoryMB() int {
 	return mb
 }
 
+// wizSuggestPort returns the first free port from 25565 that no other
+// instance declares in its server.properties. NextFree scans for a bindable
+// port; when that port is merely reserved by a stopped instance the scan
+// advances by one and asks again.
+func (a *app) wizSuggestPort() int {
+	instances := a.store.Instances()
+	next := 25565
+	for i := 0; i <= 100; i++ {
+		port, err := ports.NextFree(next)
+		if err != nil {
+			return next
+		}
+		if _, taken := ports.Reserved(instances, port); !taken {
+			return port
+		}
+		next = port + 1
+	}
+	return next
+}
+
+// wizEnterPort opens the port step with a fresh suggestion.
+func (a *app) wizEnterPort() {
+	a.wizPort.Set("")
+	a.wizPortDefault.Set(a.wizSuggestPort())
+	a.wizMsg.Set("")
+	a.wizStep.Set(wizPort)
+}
+
+// wizPortValue is the port the user ends up with: the typed value, or the
+// suggested default when the field is empty.
+func (a *app) wizPortValue() int {
+	raw := strings.TrimSpace(a.wizPort.Get())
+	if raw == "" {
+		return a.wizPortDefault.Get()
+	}
+	port, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
+// wizSubmitPort validates the chosen port before moving on to the EULA.
+func (a *app) wizSubmitPort() {
+	port := a.wizPortValue()
+	if err := ports.Validate(a.store.Instances(), "", port); err != nil {
+		a.wizMsg.Set("Error: " + err.Error())
+		return
+	}
+	a.wizMsg.Set("")
+	a.wizStep.Set(wizEula)
+}
+
+// wizWritePort records the chosen port in the instance's server.properties.
+// The file does not exist until the server starts, so Load returns an empty
+// file and Save creates it. A value the file already declares is left
+// untouched, which keeps a modpack's own server.properties intact.
+func wizWritePort(dir string, port int) error {
+	path := filepath.Join(dir, "server.properties")
+	props, err := properties.Load(path)
+	if err != nil {
+		return err
+	}
+	if raw, ok := props.Get("server-port"); ok {
+		if current, err := strconv.Atoi(strings.TrimSpace(raw)); err == nil && current == port {
+			return nil
+		}
+	}
+	props.Set("server-port", strconv.Itoa(port))
+	return props.Save(path)
+}
+
 func (a *app) wizStartDownload() {
 	typ := wizChoices[a.wizTypeIdx.Get()].Type
 	version := a.wizVersions.Get()[a.wizVerIdx.Get()]
 	name := a.wizName.Get()
 	memMB := a.wizMemoryMB()
+	port := a.wizPortValue()
 	gen := a.wizGen.Get()
 	a.wizMsg.Set("Resolving download URL...")
 	a.wizStep.Set(wizDownload)
@@ -254,6 +332,10 @@ func (a *app) wizStartDownload() {
 			a.wizFail(gen, err)
 			return
 		}
+		if err := wizWritePort(dir, port); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
 		inst := config.Instance{
 			Name:     name,
 			Dir:      dir,
@@ -280,6 +362,7 @@ func (a *app) wizStartDownload() {
 		})
 		a.appendLog(name, fmt.Sprintf("[mc-tui] Instance created: %s %s (%d MB)", typ, version, memMB))
 		a.selected.Set(len(a.managers.Get()) - 1)
+		a.reloadPorts()
 		a.wizClose()
 	}()
 }
@@ -582,6 +665,7 @@ func (a *app) wizStartModpackInstall() {
 	pack, pv := packs[pi], vers[vi]
 	name := a.wizName.Get()
 	memMB := a.wizMemoryMB()
+	port := a.wizPortValue()
 	gen := a.wizGen.Get()
 	a.wizMsg.Set("Downloading modpack...")
 	a.wizStep.Set(wizDownload)
@@ -641,6 +725,10 @@ func (a *app) wizStartModpackInstall() {
 			a.wizFail(gen, err)
 			return
 		}
+		if err := wizWritePort(dir, port); err != nil {
+			a.wizFail(gen, err)
+			return
+		}
 		// La copia del índice y los IDs del pack permiten actualizar la
 		// instancia cuando el modpack publique una versión nueva.
 		if err := mrpack.WriteIndex(ix, filepath.Join(dir, mrpack.IndexCopyName)); err != nil {
@@ -678,6 +766,7 @@ func (a *app) wizStartModpackInstall() {
 			a.appendLog(name, fmt.Sprintf("[mc-tui] Skipped %d client-only mods (Modrinth marks them server-unsupported)", skipped))
 		}
 		a.selected.Set(len(a.managers.Get()) - 1)
+		a.reloadPorts()
 		a.wizClose()
 	}()
 }
@@ -1050,8 +1139,26 @@ func (a *app) wizKeyMap() tui.KeyMap {
 					a.wizStep.Set(wizImpVer)
 					return
 				}
-				a.wizStep.Set(wizEula)
+				a.wizEnterPort()
 			}),
+			esc,
+		}
+	case wizPort:
+		return tui.KeyMap{
+			tui.OnStop(tui.AnyRune, func(ke tui.KeyEvent) {
+				if ke.Rune >= '0' && ke.Rune <= '9' {
+					a.wizPort.Update(func(s string) string { return s + string(ke.Rune) })
+				}
+			}),
+			tui.OnStop(tui.KeyBackspace, func(ke tui.KeyEvent) {
+				a.wizPort.Update(func(s string) string {
+					if len(s) == 0 {
+						return s
+					}
+					return s[:len(s)-1]
+				})
+			}),
+			tui.OnStop(tui.KeyEnter, func(ke tui.KeyEvent) { a.wizSubmitPort() }),
 			esc,
 		}
 	case wizEula:
@@ -1104,6 +1211,12 @@ func (a *app) wizHints() []hint {
 		return []hint{{"a-z 0-9 - _", "type"}, {"Enter", "continue"}, {"Esc", "cancel"}}
 	case wizMem:
 		return []hint{{"0-9", "type (empty = 2048)"}, {"Enter", "continue"}, {"Esc", "cancel"}}
+	case wizPort:
+		return []hint{
+			{"0-9", fmt.Sprintf("type (empty = %d)", a.wizPortDefault.Get())},
+			{"Enter", "continue"},
+			{"Esc", "cancel"},
+		}
 	case wizEula:
 		return []hint{{"y", "accept & download"}, {"n/Esc", "cancel"}}
 	case wizError:
@@ -1140,21 +1253,23 @@ func (a *app) wizStepTitle() string {
 	if a.wizIsModpack() {
 		switch a.wizStep.Get() {
 		case wizType:
-			return "1/7 · Server type"
+			return "1/8 · Server type"
 		case wizPackSearch:
-			return "2/7 · Modpack search"
+			return "2/8 · Modpack search"
 		case wizLoading:
 			return "Fetching from Modrinth"
 		case wizPackList:
-			return "3/7 · Modpack"
+			return "3/8 · Modpack"
 		case wizPackVer:
-			return "4/7 · Modpack version"
+			return "4/8 · Modpack version"
 		case wizName:
-			return "5/7 · Instance name"
+			return "5/8 · Instance name"
 		case wizMem:
-			return "6/7 · Memory (MB)"
+			return "6/8 · Memory (MB)"
+		case wizPort:
+			return "7/8 · Port"
 		case wizEula:
-			return "7/7 · Minecraft EULA"
+			return "8/8 · Minecraft EULA"
 		case wizDownload:
 			return "Installing modpack"
 		default:
@@ -1163,17 +1278,19 @@ func (a *app) wizStepTitle() string {
 	}
 	switch a.wizStep.Get() {
 	case wizType:
-		return "1/5 · Server type"
+		return "1/6 · Server type"
 	case wizLoading:
-		return "2/5 · Fetching versions"
+		return "2/6 · Fetching versions"
 	case wizVersion:
-		return "2/5 · Version"
+		return "2/6 · Version"
 	case wizName:
-		return "3/5 · Instance name"
+		return "3/6 · Instance name"
 	case wizMem:
-		return "4/5 · Memory (MB)"
+		return "4/6 · Memory (MB)"
+	case wizPort:
+		return "5/6 · Port"
 	case wizEula:
-		return "5/5 · Minecraft EULA"
+		return "6/6 · Minecraft EULA"
 	case wizDownload:
 		return "Downloading"
 	default:
